@@ -359,3 +359,4 @@ export default class Database {
 
 export { Database };
 export { AsyncDatabase, AsyncStatement } from './async';
+export { drizzle } from './drizzle';

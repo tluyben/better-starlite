@@ -11,7 +11,7 @@ const users = sqliteTable('users', {
 });
 
 async function main() {
-  const database = new AsyncDatabase('drizzle-test.db');
+  const database = new AsyncDatabase('http://localhost:4001');
 
   const db = drizzle(database);
 
@@ -24,7 +24,7 @@ async function main() {
     )
   `);
 
-  console.log('Inserting users with Drizzle...');
+  console.log('Inserting users with Drizzle (via rqlite)...');
 
   await db.insert(users).values({
     name: 'Alice',
@@ -36,7 +36,7 @@ async function main() {
     { name: 'Charlie', email: 'charlie@drizzle.com' },
   ]);
 
-  console.log('\nQuerying all users:');
+  console.log('\nQuerying all users from rqlite:');
   const allUsers = await db.select().from(users);
   console.log(allUsers);
 
@@ -47,18 +47,18 @@ async function main() {
     .where(eq(users.email, 'alice@drizzle.com'));
   console.log(alice);
 
-  console.log('\nUpdating user:');
+  console.log('\nUpdating user in rqlite:');
   await db
     .update(users)
     .set({ name: 'Alice Updated' })
     .where(eq(users.email, 'alice@drizzle.com'));
 
-  console.log('\nDeleting user:');
+  console.log('\nDeleting user from rqlite:');
   await db
     .delete(users)
     .where(eq(users.email, 'charlie@drizzle.com'));
 
-  console.log('\nFinal user list:');
+  console.log('\nFinal user list from rqlite:');
   const finalUsers = await db.select().from(users);
   console.log(finalUsers);
 

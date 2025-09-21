@@ -4,12 +4,25 @@
   "description": "Drop-in replacement for better-sqlite3 with rqlite support and async/await API",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./drizzle": {
+      "require": "./dist/drizzle.js",
+      "import": "./dist/drizzle.js",
+      "types": "./dist/drizzle.d.ts"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "jest",
     "lint": "eslint . --ext .ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check": "tsc --noEmit"
   },
   "keywords": [
     "sqlite",

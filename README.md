@@ -65,14 +65,16 @@ async function main() {
 ### With Drizzle ORM
 
 ```typescript
-import Database from 'better-starlite';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { AsyncDatabase } from 'better-starlite';
+import { drizzle } from 'better-starlite/drizzle';
 
 // Works with both local and rqlite databases
-const database = new Database('http://localhost:4001');
+const database = new AsyncDatabase('http://localhost:4001');
+// const database = new AsyncDatabase('myapp.db'); // for local SQLite
+
 const db = drizzle(database);
 
-// Use Drizzle as normal
+// Use Drizzle as normal (all operations are async)
 const results = await db.select().from(users);
 ```
 
