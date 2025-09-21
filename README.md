@@ -1,0 +1,155 @@
+# better-starlite
+
+A drop-in replacement for better-sqlite3 with transparent rqlite support. Write once, run anywhere - against local SQLite or distributed rqlite clusters.
+
+**Now with async/await support!** Choose between synchronous (better-sqlite3 compatible) or asynchronous APIs.
+
+## Features
+
+- 🎯 **100% API compatible** with better-sqlite3
+- 🌐 **Transparent rqlite support** - just use HTTP/HTTPS URLs
+- 🚀 **Synchronous API** - drop-in replacement for better-sqlite3
+- ⚡ **Async API** - modern Promise-based API for both SQLite and rqlite
+- 📦 **Drizzle ORM support** included (sync and async)
+- 🔄 **WAL mode enabled by default** for better performance
+
+## Installation
+
+```bash
+npm install better-starlite
+```
+
+## Usage
+
+### Synchronous API (better-sqlite3 compatible)
+
+```javascript
+const Database = require('better-starlite').default;
+
+// Local SQLite (uses better-sqlite3)
+const localDb = new Database('myapp.db');
+
+// rqlite cluster (automatic detection via URL)
+const rqliteDb = new Database('http://localhost:4001');
+
+// The API is identical for both!
+const stmt = db.prepare('SELECT * FROM users WHERE id = ?');
+const user = stmt.get(userId);
+```
+
+### Asynchronous API (Promise-based)
+
+```javascript
+const { AsyncDatabase } = require('better-starlite');
+
+async function main() {
+  // Works with both local and rqlite
+  const db = new AsyncDatabase('myapp.db');
+  // const db = new AsyncDatabase('http://localhost:4001');
+
+  // All methods are async
+  const stmt = await db.prepare('SELECT * FROM users WHERE id = ?');
+  const user = await stmt.get(userId);
+
+  // Transactions are async too
+  const insertMany = await db.transaction(async (users) => {
+    for (const user of users) {
+      await stmt.run(user.name, user.email);
+    }
+  });
+
+  await db.close();
+}
+```
+
+### With Drizzle ORM
+
+```typescript
+import Database from 'better-starlite';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
+
+// Works with both local and rqlite databases
+const database = new Database('http://localhost:4001');
+const db = drizzle(database);
+
+// Use Drizzle as normal
+const results = await db.select().from(users);
+```
+
+### WAL Mode
+
+WAL mode is enabled by default for better performance. To disable:
+
+```javascript
+const db = new Database('myapp.db', {
+  disableWAL: true
+});
+```
+
+## API Compatibility
+
+Both sync and async versions support the same operations:
+
+### Synchronous API (Database class)
+- ✅ `prepare()` - Prepare statements
+- ✅ `exec()` - Execute SQL
+- ✅ `transaction()` - Transaction support
+- ✅ `pragma()` - Pragma commands
+- ✅ `function()` - Custom functions (SQLite only)
+- ✅ `aggregate()` - Custom aggregates (SQLite only)
+- ✅ `backup()` - Backup support (SQLite only)
+- ✅ Statement methods: `run()`, `get()`, `all()`, `iterate()`
+- ✅ Statement modifiers: `pluck()`, `expand()`, `raw()`
+
+### Asynchronous API (AsyncDatabase class)
+- ✅ `await prepare()` - Prepare statements
+- ✅ `await exec()` - Execute SQL
+- ✅ `await transaction()` - Transaction support
+- ✅ `await pragma()` - Pragma commands
+- ✅ `await function()` - Custom functions (SQLite only)
+- ✅ `await aggregate()` - Custom aggregates (SQLite only)
+- ✅ `await backup()` - Backup support (SQLite only)
+- ✅ Statement methods: `await run()`, `await get()`, `await all()`, `await iterate()`
+- ✅ Statement modifiers: `await pluck()`, `await expand()`, `await raw()`
+
+## How it Works
+
+better-starlite automatically detects the connection type:
+
+- **File paths** (e.g., `myapp.db`, `:memory:`) → Uses better-sqlite3
+- **HTTP/HTTPS URLs** (e.g., `http://localhost:4001`) → Uses rqlite client
+
+### Synchronous API
+The sync API uses `deasync` to provide better-sqlite3 compatible synchronous behavior for rqlite.
+
+### Asynchronous API
+The async API provides native Promises for both SQLite and rqlite, making it ideal for modern Node.js applications.
+
+## Options
+
+```typescript
+interface DatabaseOptions {
+  // Standard better-sqlite3 options
+  readonly?: boolean;
+  fileMustExist?: boolean;
+  timeout?: number;
+  verbose?: Function;
+
+  // better-starlite specific
+  disableWAL?: boolean;  // Disable WAL mode (enabled by default)
+  rqliteLevel?: 'none' | 'weak' | 'strong';  // rqlite consistency
+}
+```
+
+## Examples
+
+Check the `examples/` directory for:
+- Synchronous API usage (better-sqlite3 compatible)
+- Asynchronous API usage (Promise-based)
+- Drizzle ORM integration (sync and async)
+- Transaction examples
+- WAL mode configuration
+
+## License
+
+MIT
