@@ -1,4 +1,4 @@
-# better-starlite
+# better-*lite
 
 A drop-in replacement for better-sqlite3 with transparent rqlite support. Write once, run anywhere - against local SQLite or distributed rqlite clusters.
 
