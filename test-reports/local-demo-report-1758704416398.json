@@ -1,0 +1,74 @@
+{
+  "timestamp": "2025-09-24T09:00:16.395Z",
+  "environment": "local (no Docker)",
+  "results": {
+    "sqlite": {
+      "sync": {
+        "reads": {
+          "count": 100,
+          "successful": 100,
+          "failed": 0,
+          "mean": "0.01",
+          "median": "0.00",
+          "p95": "0.02",
+          "p99": "0.24",
+          "min": "0.00",
+          "max": "0.24",
+          "throughput": "102982.05"
+        }
+      },
+      "async": {
+        "reads": {
+          "count": 100,
+          "successful": 100,
+          "failed": 0,
+          "mean": "0.02",
+          "median": "0.00",
+          "p95": "0.01",
+          "p99": "1.29",
+          "min": "0.00",
+          "max": "1.29",
+          "throughput": "52886.41"
+        },
+        "writes": {
+          "count": 50,
+          "successful": 50,
+          "failed": 0,
+          "mean": "0.01",
+          "median": "0.01",
+          "p95": "0.02",
+          "p99": "0.16",
+          "min": "0.01",
+          "max": "0.16",
+          "throughput": "83083.80"
+        }
+      }
+    },
+    "rqlite_simulated": {
+      "weak": {
+        "read": {
+          "mean": "0.15",
+          "p95": "0.40"
+        },
+        "write": {
+          "mean": "0.25",
+          "p95": "0.60"
+        }
+      },
+      "strong": {
+        "read": {
+          "mean": "0.20",
+          "p95": "0.50"
+        },
+        "write": {
+          "mean": "0.35",
+          "p95": "0.80"
+        }
+      }
+    }
+  },
+  "comparison": {
+    "read_latency_ratio": "7.5x",
+    "write_latency_ratio": "25.0x"
+  }
+}

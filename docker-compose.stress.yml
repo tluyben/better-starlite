@@ -1,0 +1,210 @@
+version: '3.8'
+
+services:
+  # rqlite cluster nodes (configurable via RQLITE_NODES env var, default 3)
+  rqlite-1:
+    image: rqlite/rqlite:latest
+    hostname: rqlite-1
+    container_name: rqlite-stress-1
+    command: [
+      "-node-id", "1",
+      "-http-addr", "0.0.0.0:4001",
+      "-raft-addr", "0.0.0.0:4002",
+      "-http-adv-addr", "rqlite-1:4001",
+      "-raft-adv-addr", "rqlite-1:4002"
+    ]
+    ports:
+      - "4001:4001"
+      - "4002:4002"
+    networks:
+      - stress-test-net
+    volumes:
+      - rqlite-1-data:/rqlite/file
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4001/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  rqlite-2:
+    image: rqlite/rqlite:latest
+    hostname: rqlite-2
+    container_name: rqlite-stress-2
+    command: [
+      "-node-id", "2",
+      "-http-addr", "0.0.0.0:4001",
+      "-raft-addr", "0.0.0.0:4002",
+      "-http-adv-addr", "rqlite-2:4001",
+      "-raft-adv-addr", "rqlite-2:4002",
+      "-join", "http://rqlite-1:4001"
+    ]
+    ports:
+      - "4011:4001"
+      - "4012:4002"
+    depends_on:
+      rqlite-1:
+        condition: service_healthy
+    networks:
+      - stress-test-net
+    volumes:
+      - rqlite-2-data:/rqlite/file
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4001/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  rqlite-3:
+    image: rqlite/rqlite:latest
+    hostname: rqlite-3
+    container_name: rqlite-stress-3
+    command: [
+      "-node-id", "3",
+      "-http-addr", "0.0.0.0:4001",
+      "-raft-addr", "0.0.0.0:4002",
+      "-http-adv-addr", "rqlite-3:4001",
+      "-raft-adv-addr", "rqlite-3:4002",
+      "-join", "http://rqlite-1:4001"
+    ]
+    ports:
+      - "4021:4001"
+      - "4022:4002"
+    depends_on:
+      rqlite-1:
+        condition: service_healthy
+    networks:
+      - stress-test-net
+    volumes:
+      - rqlite-3-data:/rqlite/file
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4001/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # Optional additional nodes (uncomment to scale to 5 nodes for better fault tolerance)
+  rqlite-4:
+    image: rqlite/rqlite:latest
+    hostname: rqlite-4
+    container_name: rqlite-stress-4
+    command: [
+      "-node-id", "4",
+      "-http-addr", "0.0.0.0:4001",
+      "-raft-addr", "0.0.0.0:4002",
+      "-http-adv-addr", "rqlite-4:4001",
+      "-raft-adv-addr", "rqlite-4:4002",
+      "-join", "http://rqlite-1:4001"
+    ]
+    ports:
+      - "4031:4001"
+      - "4032:4002"
+    depends_on:
+      rqlite-1:
+        condition: service_healthy
+    networks:
+      - stress-test-net
+    volumes:
+      - rqlite-4-data:/rqlite/file
+    profiles:
+      - "5-nodes"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4001/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  rqlite-5:
+    image: rqlite/rqlite:latest
+    hostname: rqlite-5
+    container_name: rqlite-stress-5
+    command: [
+      "-node-id", "5",
+      "-http-addr", "0.0.0.0:4001",
+      "-raft-addr", "0.0.0.0:4002",
+      "-http-adv-addr", "rqlite-5:4001",
+      "-raft-adv-addr", "rqlite-5:4002",
+      "-join", "http://rqlite-1:4001"
+    ]
+    ports:
+      - "4041:4001"
+      - "4042:4002"
+    depends_on:
+      rqlite-1:
+        condition: service_healthy
+    networks:
+      - stress-test-net
+    volumes:
+      - rqlite-5-data:/rqlite/file
+    profiles:
+      - "5-nodes"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4001/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # SQLite test application container
+  sqlite-app:
+    image: node:20-alpine
+    container_name: sqlite-stress-app
+    working_dir: /app
+    volumes:
+      - .:/app
+      - sqlite-data:/app/data
+    command: tail -f /dev/null  # Keep container running
+    networks:
+      - stress-test-net
+    environment:
+      - NODE_ENV=test
+      - SQLITE_DB_PATH=/app/data/stress-test.db
+
+  # Monitoring stack (optional but useful)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: stress-prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - stress-test-net
+    profiles:
+      - "monitoring"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: stress-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - stress-test-net
+    profiles:
+      - "monitoring"
+
+networks:
+  stress-test-net:
+    driver: bridge
+
+volumes:
+  rqlite-1-data:
+  rqlite-2-data:
+  rqlite-3-data:
+  rqlite-4-data:
+  rqlite-5-data:
+  sqlite-data:
+  prometheus-data:
+  grafana-data:
