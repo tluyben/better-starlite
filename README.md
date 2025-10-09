@@ -1,22 +1,59 @@
 # better-*lite
 
-A drop-in replacement for better-sqlite3 with transparent rqlite support. Write once, run anywhere - against local SQLite or distributed rqlite clusters.
+A unified async database interface for SQLite and RQLite that works in both Node.js and Deno. Write once, run anywhere - against local SQLite or distributed rqlite clusters.
 
-**Now with async/await support!** Choose between synchronous (better-sqlite3 compatible) or asynchronous APIs.
+**🚨 IMPORTANT: For cross-platform compatibility (Node.js + Deno), you MUST use the async interface. The synchronous API is Node.js-only for backward compatibility.**
 
 ## Features
 
-- 🎯 **100% API compatible** with better-sqlite3
+- 🎯 **Cross-platform** - Works in both Node.js and Deno
 - 🌐 **Transparent rqlite support** - just use HTTP/HTTPS URLs
-- 🚀 **Synchronous API** - drop-in replacement for better-sqlite3
-- ⚡ **Async API** - modern Promise-based API for both SQLite and rqlite
-- 📦 **Drizzle ORM support** included (sync and async)
+- ⚡ **Unified Async API** - modern Promise-based API for both SQLite and rqlite
+- 🚀 **Synchronous API** - Node.js-only, for better-sqlite3 compatibility
+- 📦 **Drizzle ORM support** included
 - 🔄 **WAL mode enabled by default** for better performance
 
 ## Installation
 
+### Node.js
 ```bash
 npm install better-starlite
+```
+
+### Deno
+```typescript
+// Import directly from local path
+import { createDatabase } from '../path/to/better-starlite/src/async-unified-deno.ts';
+```
+
+## Cross-Platform Usage (RECOMMENDED)
+
+**For code that works in both Node.js and Deno, use the async interface:**
+
+### Node.js
+```javascript
+const { createDatabase } = require('better-starlite/dist/async-unified');
+
+async function main() {
+  const db = await createDatabase('myapp.db');
+  // or const db = await createDatabase('http://localhost:4001');
+
+  const stmt = await db.prepare('SELECT * FROM users WHERE id = ?');
+  const user = await stmt.get(userId);
+  await db.close();
+}
+```
+
+### Deno
+```typescript
+import { createDatabase } from './src/async-unified-deno.ts';
+
+const db = await createDatabase('myapp.db');
+// or const db = await createDatabase('http://localhost:4001');
+
+const stmt = await db.prepare('SELECT * FROM users WHERE id = ?');
+const user = await stmt.get(userId);
+await db.close();
 ```
 
 ## Usage

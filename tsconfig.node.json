@@ -1,0 +1,37 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": ["ES2020"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "resolveJsonModule": true,
+    "noImplicitAny": false
+  },
+  "include": [
+    "src/index.ts",
+    "src/async.ts",
+    "src/async-unified.ts",
+    "src/drizzle.ts",
+    "src/rqlite-client.ts",
+    "src/runtime.ts",
+    "src/database-node.ts",
+    "src/drivers/node-*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts",
+    "src/database-deno.ts",
+    "src/drivers/deno-*.ts",
+    "src/index-unified.ts",
+    "src/index-cross-platform.ts"
+  ]
+}
