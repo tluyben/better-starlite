@@ -1,0 +1,86 @@
+{
+  "name": "better-starlite",
+  "version": "2.0.0",
+  "description": "Universal SQLite/RQLite interface with driver injection - no compilation issues",
+  "main": "./dist/index-safe.js",
+  "types": "./dist/index-safe.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index-safe.d.ts",
+      "require": "./dist/index-safe.js",
+      "import": "./dist/index-safe.mjs",
+      "default": "./dist/index-safe.js"
+    },
+    "./safe": {
+      "types": "./dist/index-safe.d.ts",
+      "require": "./dist/index-safe.js",
+      "import": "./dist/index-safe.mjs"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "require": "./dist/node.js",
+      "import": "./dist/node.mjs"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "require": "./dist/browser.js",
+      "import": "./dist/browser.mjs"
+    },
+    "./drivers": {
+      "types": "./dist/drivers/index.d.ts",
+      "require": "./dist/drivers/index.js",
+      "import": "./dist/drivers/index.mjs"
+    },
+    "./drivers/interface": {
+      "types": "./dist/drivers/driver-interface.d.ts",
+      "require": "./dist/drivers/driver-interface.js",
+      "import": "./dist/drivers/driver-interface.mjs"
+    },
+    "./drivers/sqlite-node": {
+      "types": "./dist/drivers/sqlite-node-driver.d.ts",
+      "require": "./dist/drivers/sqlite-node-driver.js",
+      "import": "./dist/drivers/sqlite-node-driver.mjs"
+    },
+    "./drivers/sqlite-deno": {
+      "types": "./dist/drivers/sqlite-deno-driver.d.ts",
+      "require": "./dist/drivers/sqlite-deno-driver.js",
+      "import": "./dist/drivers/sqlite-deno-driver.mjs"
+    },
+    "./drivers/rqlite": {
+      "types": "./dist/drivers/rqlite-driver.d.ts",
+      "require": "./dist/drivers/rqlite-driver.js",
+      "import": "./dist/drivers/rqlite-driver.mjs"
+    },
+    "./drivers/dummy": {
+      "types": "./dist/drivers/dummy-driver.d.ts",
+      "require": "./dist/drivers/dummy-driver.js",
+      "import": "./dist/drivers/dummy-driver.mjs"
+    },
+    "./drivers/template": {
+      "types": "./dist/drivers/template-driver.d.ts",
+      "require": "./dist/drivers/template-driver.js",
+      "import": "./dist/drivers/template-driver.mjs"
+    }
+  },
+  "browser": {
+    ".": "./dist/browser.js",
+    "./safe": "./dist/index-safe.js"
+  },
+  "react-native": {
+    ".": "./dist/index-safe.js",
+    "./safe": "./dist/index-safe.js"
+  },
+  "peerDependencies": {
+    "better-sqlite3": ">=7.0.0"
+  },
+  "peerDependenciesMeta": {
+    "better-sqlite3": {
+      "optional": true
+    }
+  },
+  "optionalDependencies": {},
+  "devDependencies": {
+    "better-sqlite3": "^8.0.0",
+    "deasync": "^0.1.28"
+  }
+}
