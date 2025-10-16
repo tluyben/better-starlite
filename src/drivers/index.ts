@@ -12,6 +12,9 @@
  *   DriverRegistry.register('sqlite-node', createSqliteNodeDriver());
  */
 
+// Import for internal use
+import { DriverRegistry } from './driver-interface';
+
 // Export the driver interface and registry
 export {
   DriverRegistry,
@@ -51,13 +54,8 @@ export async function autoRegisterDrivers(drivers?: string[]): Promise<void> {
           break;
 
         case 'sqlite-deno':
-          if (typeof (globalThis as any).Deno !== 'undefined') {
-            const { createSqliteDenoDriver } = await import('./sqlite-deno-driver');
-            const driver = createSqliteDenoDriver();
-            if (driver.isAvailable()) {
-              DriverRegistry.register('sqlite-deno', driver);
-            }
-          }
+          // Deno driver is not available in Node.js build
+          // It's in a separate file for Deno-specific builds
           break;
 
         case 'rqlite':

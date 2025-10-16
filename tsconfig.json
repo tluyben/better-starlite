@@ -15,5 +15,18 @@
     "resolveJsonModule": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts",
+    "src/**/*-deno.ts",
+    "src/**/*-deno.js",
+    "src/drivers/deno-*.ts",
+    "src/drivers/deno-*.js",
+    "src/drivers/sqlite-deno-driver.ts",
+    "src/drivers/sqlite-deno-driver.js",
+    "src/drivers/sqlite-deno-driver.ts",
+    "src/index-cross-platform.ts",
+    "src/database-deno.ts"
+  ]
 }

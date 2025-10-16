@@ -225,7 +225,7 @@ class RqliteClient {
         signal: AbortSignal.timeout(this.options.timeout || 30000)
       });
 
-      const data = await response.json();
+      const data = await response.json() as RqliteResult;
 
       if (response.ok) {
         return data;

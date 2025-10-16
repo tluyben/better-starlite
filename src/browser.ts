@@ -8,7 +8,7 @@
 import Database, { DriverRegistry } from './index-safe';
 
 // Only register web-safe drivers
-if (typeof window !== 'undefined' || typeof globalThis !== 'undefined') {
+if (typeof (globalThis as any).window !== 'undefined' || typeof globalThis !== 'undefined') {
   // Register dummy driver for testing/development
   try {
     const { createDummyDriver } = require('./drivers/dummy-driver');

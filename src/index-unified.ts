@@ -53,7 +53,7 @@ export interface DatabaseOptions {
   readonly?: boolean;
   fileMustExist?: boolean;
   timeout?: number;
-  verbose?: console.log | ((message?: any, ...additionalArgs: any[]) => void);
+  verbose?: typeof console.log | ((message?: any, ...additionalArgs: any[]) => void);
   nativeBinding?: string;
   disableWAL?: boolean;
   rqliteLevel?: 'none' | 'weak' | 'strong';
@@ -135,7 +135,7 @@ export class Statement {
     }
 
     const row: any = {};
-    firstResult.columns?.forEach((col, i) => {
+    firstResult.columns?.forEach((col: string, i: number) => {
       row[col] = firstResult.values![0][i];
     });
     return row;
@@ -160,9 +160,9 @@ export class Statement {
       return [];
     }
 
-    return firstResult.values.map(row => {
+    return firstResult.values.map((row: any[]) => {
       const obj: any = {};
-      firstResult.columns?.forEach((col, i) => {
+      firstResult.columns?.forEach((col: string, i: number) => {
         obj[col] = row[i];
       });
       return obj;
@@ -323,9 +323,9 @@ export default class Database {
       return firstResult.values[0][0];
     }
 
-    return firstResult.values.map(row => {
+    return firstResult.values.map((row: any[]) => {
       const obj: any = {};
-      firstResult.columns?.forEach((col, i) => {
+      firstResult.columns?.forEach((col: string, i: number) => {
         obj[col] = row[i];
       });
       return obj;

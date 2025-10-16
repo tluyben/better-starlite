@@ -19,7 +19,7 @@ if (typeof process !== 'undefined' && process.versions?.node) {
     }
   } catch (e) {
     // If better-sqlite3 is not installed, that's OK
-    console.warn('SQLite Node driver not available:', e.message);
+    console.warn('SQLite Node driver not available:', e instanceof Error ? e.message : String(e));
   }
 
   // Also try to register RQLite driver

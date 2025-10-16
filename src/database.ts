@@ -141,7 +141,7 @@ export default class Database implements DatabaseInterface {
       this.db = driver.createDatabase(filename, options);
     } catch (error) {
       throw new Error(
-        `Failed to create database with driver "${this.driverName}": ${error.message}`
+        `Failed to create database with driver "${this.driverName}": ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }

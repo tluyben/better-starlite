@@ -23,14 +23,12 @@
 // Export the main Database class
 export { default, Database, Statement, DatabaseOptions } from './database';
 
-// Export driver utilities
+// Export driver utilities (without duplicating types)
 export {
   DriverRegistry,
   DatabaseInterface,
   StatementInterface,
-  DriverOptions,
-  RunResult,
-  ColumnDefinition
+  DriverOptions
 } from './drivers/driver-interface';
 
 // Export auto-registration helpers

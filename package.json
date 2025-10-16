@@ -14,6 +14,11 @@
       "require": "./dist/drizzle.js",
       "import": "./dist/drizzle.js",
       "types": "./dist/drizzle.d.ts"
+    },
+    "./dist/async-unified": {
+      "require": "./dist/async-unified.js",
+      "import": "./dist/async-unified.js",
+      "types": "./dist/async-unified.d.ts"
     }
   },
   "scripts": {
