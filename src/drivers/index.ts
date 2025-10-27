@@ -38,7 +38,7 @@ export {
  * @param drivers - Array of driver names to try to register
  */
 export async function autoRegisterDrivers(drivers?: string[]): Promise<void> {
-  const driversToTry = drivers || ['sqlite-node', 'sqlite-deno', 'rqlite', 'dummy'];
+  const driversToTry = drivers || ['sqlite-node', 'sqlite-deno', 'cr-sqlite', 'rqlite', 'dummy'];
 
   for (const driverName of driversToTry) {
     try {
@@ -56,6 +56,16 @@ export async function autoRegisterDrivers(drivers?: string[]): Promise<void> {
         case 'sqlite-deno':
           // Deno driver is not available in Node.js build
           // It's in a separate file for Deno-specific builds
+          break;
+
+        case 'cr-sqlite':
+          if (typeof (globalThis as any).WebAssembly !== 'undefined') {
+            const { createCrSqliteDriver } = await import('./cr-sqlite-driver');
+            const driver = await createCrSqliteDriver();
+            if (driver.isAvailable()) {
+              DriverRegistry.register('cr-sqlite', driver);
+            }
+          }
           break;
 
         case 'rqlite':
@@ -86,7 +96,7 @@ export async function autoRegisterDrivers(drivers?: string[]): Promise<void> {
  * Note: This won't work for Deno's SQLite driver which requires async import.
  */
 export function autoRegisterDriversSync(drivers?: string[]): void {
-  const driversToTry = drivers || ['sqlite-node', 'rqlite', 'dummy'];
+  const driversToTry = drivers || ['sqlite-node', 'cr-sqlite', 'rqlite', 'dummy'];
 
   for (const driverName of driversToTry) {
     try {
@@ -97,6 +107,18 @@ export function autoRegisterDriversSync(drivers?: string[]): void {
             const driver = createSqliteNodeDriver();
             if (driver.isAvailable()) {
               DriverRegistry.register('sqlite-node', driver);
+            }
+          }
+          break;
+
+        case 'cr-sqlite':
+          // Note: CR-SQLite requires async initialization, so use autoRegisterDrivers instead
+          // This sync version will register but the driver must be initialized before use
+          if (typeof (globalThis as any).WebAssembly !== 'undefined') {
+            const { createCrSqliteDriverSync } = require('./cr-sqlite-driver');
+            const driver = createCrSqliteDriverSync();
+            if (driver.isAvailable()) {
+              DriverRegistry.register('cr-sqlite', driver);
             }
           }
           break;

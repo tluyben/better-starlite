@@ -8,6 +8,7 @@ A unified async database interface for SQLite and RQLite that works in both Node
 
 - 🎯 **Cross-platform** - Works in both Node.js and Deno
 - 🌐 **Transparent rqlite support** - just use HTTP/HTTPS URLs
+- 🔄 **CR-SQLite support** - Offline-first apps with CRDT replication (NEW!)
 - ⚡ **Unified Async API** - modern Promise-based API for both SQLite and rqlite
 - 🚀 **Synchronous API** - Node.js-only, for better-sqlite3 compatibility
 - 📦 **Drizzle ORM support** included
@@ -25,6 +26,13 @@ npm install better-starlite
 // Import directly from local path
 import { createDatabase } from '../path/to/better-starlite/src/async-unified-deno.ts';
 ```
+
+### CR-SQLite (for offline-first apps)
+```bash
+npm install better-starlite @vlcn.io/crsqlite-wasm
+```
+
+See [CR-SQLite Driver Documentation](docs/CR-SQLITE-DRIVER.md) for details.
 
 ## Cross-Platform Usage (RECOMMENDED)
 
@@ -114,6 +122,48 @@ const db = drizzle(database);
 // Use Drizzle as normal (all operations are async)
 const results = await db.select().from(users);
 ```
+
+### With CR-SQLite (Offline-First with CRDT Replication)
+
+```javascript
+const { DriverRegistry } = require('better-starlite/drivers');
+const { createCrSqliteDriver } = require('better-starlite/drivers/cr-sqlite-driver');
+
+async function main() {
+  // Initialize and register CR-SQLite driver
+  const driver = await createCrSqliteDriver();
+  DriverRegistry.register('cr-sqlite', driver);
+
+  // Create database with unique site ID for sync
+  const db = driver.createDatabase('myapp.db', {
+    siteId: 'browser-user-123'
+  });
+
+  // Use normally
+  db.exec('CREATE TABLE todos (id INTEGER PRIMARY KEY, title TEXT)');
+  db.prepare('INSERT INTO todos (title) VALUES (?)').run('My todo');
+
+  // Enable CRDT tracking for sync
+  db.exec("SELECT crsql_as_crr('todos')");
+
+  // Get changes for sync
+  const changes = db.getChanges();
+  await syncToServer(changes);
+
+  // Apply remote changes
+  const remoteChanges = await fetchFromServer();
+  db.applyChanges(remoteChanges);
+}
+```
+
+**Perfect for:**
+- 📱 Mobile apps (offline-first)
+- 🌐 Progressive Web Apps (PWAs)
+- 🔄 Multi-device sync
+- 👥 Collaborative apps
+- 🚀 Edge computing
+
+See [CR-SQLite Driver Documentation](docs/CR-SQLITE-DRIVER.md) for complete guide.
 
 ### WAL Mode
 

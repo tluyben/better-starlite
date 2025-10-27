@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CR-SQLite Browser Example</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    h1 {
+      color: #333;
+      border-bottom: 3px solid #4CAF50;
+      padding-bottom: 10px;
+    }
+    .status {
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      margin: 20px 0;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .status.success { border-left: 4px solid #4CAF50; }
+    .status.error { border-left: 4px solid #f44336; }
+    .status.info { border-left: 4px solid #2196F3; }
+    button {
+      background: #4CAF50;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 16px;
+      margin: 5px;
+    }
+    button:hover {
+      background: #45a049;
+    }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    #todoList {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .todo-item {
+      padding: 10px;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .todo-item:last-child {
+      border-bottom: none;
+    }
+    .todo-item.completed {
+      text-decoration: line-through;
+      color: #888;
+    }
+    input[type="text"] {
+      padding: 10px;
+      font-size: 16px;
+      border: 2px solid #ddd;
+      border-radius: 5px;
+      width: 300px;
+    }
+    .controls {
+      margin: 20px 0;
+    }
+    pre {
+      background: #f8f8f8;
+      padding: 15px;
+      border-radius: 5px;
+      overflow-x: auto;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🔄 CR-SQLite Browser Example</h1>
+
+  <div class="status info">
+    <strong>Status:</strong> <span id="status">Loading...</span>
+  </div>
+
+  <div class="controls">
+    <h2>Add Todo</h2>
+    <input type="text" id="todoInput" placeholder="Enter todo title..." />
+    <button onclick="addTodo()">Add Todo</button>
+  </div>
+
+  <div id="todoList">
+    <h2>Todos</h2>
+    <div id="todos">
+      <p>No todos yet. Add one above!</p>
+    </div>
+  </div>
+
+  <div class="controls">
+    <h2>Sync Controls</h2>
+    <button onclick="showChanges()">Show Changes</button>
+    <button onclick="exportDatabase()">Export Database</button>
+    <button onclick="clearDatabase()">Clear Database</button>
+  </div>
+
+  <div id="output"></div>
+
+  <script type="module">
+    // Note: This is a simplified example. In a real application, you would:
+    // 1. Load CR-SQLite WASM from a CDN or bundled
+    // 2. Use a bundler like Webpack/Vite to handle imports
+    // 3. Implement actual sync with a server
+
+    let db = null;
+    let driver = null;
+
+    async function init() {
+      const statusEl = document.getElementById('status');
+
+      try {
+        statusEl.textContent = 'Loading CR-SQLite WASM...';
+
+        // In a real app, you would import from your bundled version
+        // For this example, we'll simulate the initialization
+        statusEl.textContent = '⚠️ Demo Mode: Install and bundle @vlcn.io/crsqlite-wasm for full functionality';
+
+        // Simulate database creation (replace with actual CR-SQLite in production)
+        window.dbData = [];
+        window.dbChanges = [];
+
+        statusEl.textContent = '✅ Ready (Demo Mode)';
+
+        // Load existing todos from localStorage
+        loadTodosFromStorage();
+        renderTodos();
+
+      } catch (error) {
+        statusEl.textContent = '❌ Error: ' + error.message;
+        console.error('Initialization error:', error);
+      }
+    }
+
+    function loadTodosFromStorage() {
+      const stored = localStorage.getItem('cr-sqlite-todos');
+      if (stored) {
+        window.dbData = JSON.parse(stored);
+      }
+    }
+
+    function saveTodosToStorage() {
+      localStorage.setItem('cr-sqlite-todos', JSON.stringify(window.dbData));
+    }
+
+    window.addTodo = function() {
+      const input = document.getElementById('todoInput');
+      const title = input.value.trim();
+
+      if (!title) {
+        alert('Please enter a todo title');
+        return;
+      }
+
+      // Add to "database"
+      const todo = {
+        id: Date.now(),
+        title: title,
+        completed: 0,
+        created_at: new Date().toISOString()
+      };
+
+      window.dbData.push(todo);
+      window.dbChanges.push({
+        type: 'INSERT',
+        table: 'todos',
+        data: todo
+      });
+
+      saveTodosToStorage();
+      renderTodos();
+
+      input.value = '';
+
+      showMessage('success', `Added todo: ${title}`);
+    }
+
+    window.toggleTodo = function(id) {
+      const todo = window.dbData.find(t => t.id === id);
+      if (todo) {
+        todo.completed = todo.completed ? 0 : 1;
+
+        window.dbChanges.push({
+          type: 'UPDATE',
+          table: 'todos',
+          id: id,
+          field: 'completed',
+          value: todo.completed
+        });
+
+        saveTodosToStorage();
+        renderTodos();
+
+        showMessage('success', `Toggled todo: ${todo.title}`);
+      }
+    }
+
+    window.deleteTodo = function(id) {
+      const index = window.dbData.findIndex(t => t.id === id);
+      if (index !== -1) {
+        const todo = window.dbData[index];
+        window.dbData.splice(index, 1);
+
+        window.dbChanges.push({
+          type: 'DELETE',
+          table: 'todos',
+          id: id
+        });
+
+        saveTodosToStorage();
+        renderTodos();
+
+        showMessage('success', `Deleted todo: ${todo.title}`);
+      }
+    }
+
+    function renderTodos() {
+      const container = document.getElementById('todos');
+
+      if (window.dbData.length === 0) {
+        container.innerHTML = '<p>No todos yet. Add one above!</p>';
+        return;
+      }
+
+      const html = window.dbData.map(todo => `
+        <div class="todo-item ${todo.completed ? 'completed' : ''}">
+          <span>${todo.completed ? '✅' : '⬜'} ${todo.title}</span>
+          <div>
+            <button onclick="toggleTodo(${todo.id})">
+              ${todo.completed ? 'Undo' : 'Complete'}
+            </button>
+            <button onclick="deleteTodo(${todo.id})" style="background: #f44336;">
+              Delete
+            </button>
+          </div>
+        </div>
+      `).join('');
+
+      container.innerHTML = html;
+    }
+
+    window.showChanges = function() {
+      const output = document.getElementById('output');
+
+      if (window.dbChanges.length === 0) {
+        showMessage('info', 'No changes to sync');
+        return;
+      }
+
+      const html = `
+        <div class="status info">
+          <h3>Changes to Sync (${window.dbChanges.length})</h3>
+          <pre>${JSON.stringify(window.dbChanges, null, 2)}</pre>
+          <button onclick="clearChanges()">Mark as Synced</button>
+        </div>
+      `;
+
+      output.innerHTML = html;
+    }
+
+    window.clearChanges = function() {
+      window.dbChanges = [];
+      showMessage('success', 'Changes marked as synced');
+      document.getElementById('output').innerHTML = '';
+    }
+
+    window.exportDatabase = function() {
+      const data = {
+        todos: window.dbData,
+        changes: window.dbChanges,
+        exported_at: new Date().toISOString()
+      };
+
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `cr-sqlite-export-${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      showMessage('success', 'Database exported!');
+    }
+
+    window.clearDatabase = function() {
+      if (confirm('Are you sure you want to clear all data?')) {
+        window.dbData = [];
+        window.dbChanges = [];
+        localStorage.removeItem('cr-sqlite-todos');
+        renderTodos();
+        showMessage('success', 'Database cleared');
+      }
+    }
+
+    function showMessage(type, message) {
+      const output = document.getElementById('output');
+      const html = `
+        <div class="status ${type}">
+          <strong>${type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️'}</strong>
+          ${message}
+        </div>
+      `;
+      output.innerHTML = html;
+
+      setTimeout(() => {
+        output.innerHTML = '';
+      }, 3000);
+    }
+
+    // Initialize on load
+    init();
+  </script>
+
+  <hr style="margin: 40px 0;">
+
+  <div class="status info">
+    <h3>💡 How to use CR-SQLite in a real browser app:</h3>
+    <pre>
+// 1. Install dependencies
+npm install better-starlite @vlcn.io/crsqlite-wasm
+
+// 2. In your bundled JavaScript:
+import { DriverRegistry } from 'better-starlite/drivers';
+import { createCrSqliteDriver } from 'better-starlite/drivers/cr-sqlite-driver';
+
+// 3. Initialize
+const driver = await createCrSqliteDriver();
+DriverRegistry.register('cr-sqlite', driver);
+
+// 4. Create database
+const db = driver.createDatabase('myapp.db', {
+  siteId: 'browser-' + userId
+});
+
+// 5. Use normally
+db.exec('CREATE TABLE todos (id INTEGER PRIMARY KEY, title TEXT)');
+const stmt = db.prepare('INSERT INTO todos (title) VALUES (?)');
+stmt.run('My todo');
+
+// 6. Sync changes
+const changes = db.getChanges();
+await fetch('/api/sync', {
+  method: 'POST',
+  body: JSON.stringify(changes)
+});
+    </pre>
+  </div>
+</body>
+</html>
