@@ -188,7 +188,7 @@ async function runLocalTest() {
       read: { mean: (parseFloat(syncReadStats.mean) * 15).toFixed(2), p95: (parseFloat(syncReadStats.p95) * 20).toFixed(2) },
       write: { mean: (parseFloat(asyncWriteStats.mean) * 25).toFixed(2), p95: (parseFloat(asyncWriteStats.p95) * 30).toFixed(2) },
     },
-    strong: {
+    linearizable: {
       read: { mean: (parseFloat(syncReadStats.mean) * 20).toFixed(2), p95: (parseFloat(syncReadStats.p95) * 25).toFixed(2) },
       write: { mean: (parseFloat(asyncWriteStats.mean) * 35).toFixed(2), p95: (parseFloat(asyncWriteStats.p95) * 40).toFixed(2) },
     },
@@ -198,9 +198,9 @@ async function runLocalTest() {
   console.log(`  Reads:  Mean: ${simulatedRqlite.weak.read.mean}ms, P95: ${simulatedRqlite.weak.read.p95}ms`);
   console.log(`  Writes: Mean: ${simulatedRqlite.weak.write.mean}ms, P95: ${simulatedRqlite.weak.write.p95}ms\n`);
 
-  console.log('Strong Consistency:');
-  console.log(`  Reads:  Mean: ${simulatedRqlite.strong.read.mean}ms, P95: ${simulatedRqlite.strong.read.p95}ms`);
-  console.log(`  Writes: Mean: ${simulatedRqlite.strong.write.mean}ms, P95: ${simulatedRqlite.strong.write.p95}ms\n`);
+  console.log('Linearizable Consistency:');
+  console.log(`  Reads:  Mean: ${simulatedRqlite.linearizable.read.mean}ms, P95: ${simulatedRqlite.linearizable.read.p95}ms`);
+  console.log(`  Writes: Mean: ${simulatedRqlite.linearizable.write.mean}ms, P95: ${simulatedRqlite.linearizable.write.p95}ms\n`);
 
   // Generate report
   const report = {
@@ -273,7 +273,7 @@ async function runLocalTest() {
   console.log('   - Can tolerate ~15x read latency');
   console.log('   - Automatic failover required\n');
 
-  console.log('3. Use rqlite (strong consistency) when:');
+  console.log('3. Use rqlite (linearizable consistency) when:');
   console.log('   - Data consistency critical');
   console.log('   - Financial/transactional systems');
   console.log('   - Can accept ~20-35x latency\n');

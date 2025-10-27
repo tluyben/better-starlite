@@ -176,7 +176,7 @@ interface DatabaseOptions {
 
   // better-starlite specific
   disableWAL?: boolean;  // Disable WAL mode (enabled by default)
-  rqliteLevel?: 'none' | 'weak' | 'strong';  // rqlite consistency level (see below)
+  rqliteLevel?: 'none' | 'weak' | 'linearizable';  // rqlite consistency level (see below)
 }
 ```
 
@@ -196,13 +196,14 @@ The `rqliteLevel` option controls the consistency guarantee for rqlite database 
 - **Use when**: You need fresh data but can tolerate rare edge cases
 - **Example use cases**: User dashboards, most web applications
 
-#### `strong`
+#### `linearizable`
 - **Performance**: Slowest (requires quorum confirmation)
 - **Consistency**: Strongest guarantee - linearizable consistency
-- **Use when**: Absolute consistency is required
+- **Use when**: Absolute consistency is required for production systems
 - **Example use cases**: Financial transactions, critical configuration changes
+- **Note**: Preferred over the deprecated `strong` level for production use. Provides linearizable reads without the disk space and cost overhead of `strong`.
 
-**Recommendation**: Start with `weak` for most applications as it provides a good balance of consistency and performance. Use `none` for read-heavy workloads where stale data is acceptable. Only use `strong` when you absolutely need linearizable consistency.
+**Recommendation**: Start with `weak` for most applications as it provides a good balance of consistency and performance. Use `none` for read-heavy workloads where stale data is acceptable. Only use `linearizable` when you absolutely need linearizable consistency in production systems.
 
 ```javascript
 // Example usage with consistency level

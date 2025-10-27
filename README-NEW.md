@@ -211,7 +211,7 @@ interface DatabaseOptions {
   disableWAL?: boolean;
 
   // RQLite specific
-  rqliteLevel?: 'none' | 'weak' | 'strong';
+  rqliteLevel?: 'none' | 'weak' | 'linearizable';
 }
 ```
 

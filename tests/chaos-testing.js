@@ -21,7 +21,7 @@ const config = {
   testDuration: 120000, // 2 minutes
   chaosInterval: 10000, // Cause chaos every 10 seconds
   dataIntegrityCheckInterval: 5000, // Check data every 5 seconds
-  consistencyLevels: ['weak', 'strong'],
+  consistencyLevels: ['weak', 'linearizable'],
 };
 
 // Test data tracking
@@ -477,18 +477,18 @@ function generateChaosReport(results) {
   console.log('SUMMARY');
   console.log('='.repeat(80));
 
-  const strongResult = results.find(r => r.consistencyLevel === 'strong');
+  const linearizableResult = results.find(r => r.consistencyLevel === 'linearizable');
   const weakResult = results.find(r => r.consistencyLevel === 'weak');
 
-  if (strongResult && weakResult) {
+  if (linearizableResult && weakResult) {
     console.log('\nConsistency Level Impact:');
-    console.log(`  Strong consistency data loss: ${((strongResult.finalVerification.missing / strongResult.finalVerification.total) * 100).toFixed(2)}%`);
+    console.log(`  Linearizable consistency data loss: ${((linearizableResult.finalVerification.missing / linearizableResult.finalVerification.total) * 100).toFixed(2)}%`);
     console.log(`  Weak consistency data loss: ${((weakResult.finalVerification.missing / weakResult.finalVerification.total) * 100).toFixed(2)}%`);
 
-    if (strongResult.discrepancies === 0 && weakResult.discrepancies === 0) {
+    if (linearizableResult.discrepancies === 0 && weakResult.discrepancies === 0) {
       console.log('\n✅ No data corruption detected - checksums match!');
     } else {
-      console.log(`\n⚠️ Data discrepancies found - Strong: ${strongResult.discrepancies}, Weak: ${weakResult.discrepancies}`);
+      console.log(`\n⚠️ Data discrepancies found - Linearizable: ${linearizableResult.discrepancies}, Weak: ${weakResult.discrepancies}`);
     }
   }
 

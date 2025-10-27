@@ -211,7 +211,7 @@ Based on the test results:
    - Applications that can tolerate occasional stale reads
    - Systems where node failures should not cause downtime
 
-3. **rqlite with strong consistency** is ideal for:
+3. **rqlite with linearizable consistency** is ideal for:
    - Financial or critical applications
    - Systems requiring strict data consistency
    - Applications where data integrity is more important than performance

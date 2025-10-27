@@ -26,7 +26,7 @@ Measures and compares:
 - **Read/Write latency** (mean, p50, p95, p99)
 - **Throughput** (operations per second)
 - **Sync vs Async API performance**
-- **Consistency level impact** (none, weak, strong)
+- **Consistency level impact** (none, weak, linearizable)
 
 ### 2. Chaos Engineering (`tests/chaos-testing.js`)
 
@@ -194,11 +194,12 @@ test-reports/
 - Need automatic failover
 - Multi-region deployments
 
-### Use rqlite with `strong` consistency when:
+### Use rqlite with `linearizable` consistency when:
 - Data consistency is critical
 - Financial/transactional systems
 - Can accept higher latencies
 - Need linearizable guarantees
+- Production systems requiring strict consistency (preferred over deprecated `strong` level)
 
 ## Troubleshooting
 

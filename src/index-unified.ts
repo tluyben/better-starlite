@@ -56,7 +56,7 @@ export interface DatabaseOptions {
   verbose?: typeof console.log | ((message?: any, ...additionalArgs: any[]) => void);
   nativeBinding?: string;
   disableWAL?: boolean;
-  rqliteLevel?: 'none' | 'weak' | 'strong';
+  rqliteLevel?: 'none' | 'weak' | 'linearizable';
   // Add any other options from better-sqlite3
   [key: string]: any;
 }

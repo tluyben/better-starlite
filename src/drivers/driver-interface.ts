@@ -89,7 +89,7 @@ export interface DriverOptions {
   disableWAL?: boolean;
 
   // RQLite specific
-  rqliteLevel?: 'none' | 'weak' | 'strong';
+  rqliteLevel?: 'none' | 'weak' | 'linearizable';
 
   // Better-sqlite3 specific options (kept generic)
   [key: string]: any;

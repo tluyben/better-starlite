@@ -19,7 +19,7 @@ if (typeof process !== 'undefined' && process.versions && process.versions.node)
 }
 
 export interface RqliteOptions {
-  level?: 'none' | 'weak' | 'strong';
+  level?: 'none' | 'weak' | 'linearizable';
   pretty?: boolean;
   timings?: boolean;
   timeout?: number;

@@ -4,7 +4,7 @@ import * as url from 'url';
 import * as deasync from 'deasync';
 
 export interface RqliteOptions {
-  level?: 'none' | 'weak' | 'strong';
+  level?: 'none' | 'weak' | 'linearizable';
   pretty?: boolean;
   timings?: boolean;
   timeout?: number;

@@ -20,7 +20,7 @@ const config = {
     'http://localhost:4041', // Optional 5th node
   ],
   sqlitePath: '/app/data/stress-test.db',
-  consistencyLevels: ['none', 'weak', 'strong'],
+  consistencyLevels: ['none', 'weak', 'linearizable'],
   testDuration: process.env.TEST_DURATION || 60000, // 60 seconds default
 };
 

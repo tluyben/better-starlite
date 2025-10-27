@@ -342,7 +342,7 @@ const { createDatabase } = require('better-starlite/dist/async-unified');
 
 // Connect to rqlite cluster
 const db = await createDatabase('http://localhost:4001', {
-  rqliteLevel: 'weak', // Consistency level: 'none', 'weak', or 'strong'
+  rqliteLevel: 'weak', // Consistency level: 'none', 'weak', or 'linearizable'
 });
 
 // Use exactly like SQLite!
@@ -356,7 +356,7 @@ const users = await db.prepare('SELECT * FROM users').all();
 
 - **`none`** (default): Fastest, may read stale data
 - **`weak`**: Ensures reads from leader, guarantees fresh data
-- **`strong`**: Slowest, requires quorum confirmation, linearizable consistency
+- **`linearizable`**: Slowest, requires quorum confirmation, linearizable consistency (recommended for production over deprecated `strong` level)
 
 ## Performance Optimization
 
@@ -531,7 +531,7 @@ interface DatabaseOptions {
   timeout?: number             // Busy timeout in milliseconds
   verbose?: Function           // Logging function
   disableWAL?: boolean         // Disable WAL mode
-  rqliteLevel?: 'none' | 'weak' | 'strong'  // RQLite consistency
+  rqliteLevel?: 'none' | 'weak' | 'linearizable'  // RQLite consistency
 }
 ```
 

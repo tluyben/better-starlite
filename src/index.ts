@@ -5,7 +5,7 @@ type SqliteOptions = BetterSqlite3.Options;
 
 export interface DatabaseOptions extends SqliteOptions {
   disableWAL?: boolean;
-  rqliteLevel?: 'none' | 'weak' | 'strong';
+  rqliteLevel?: 'none' | 'weak' | 'linearizable';
 }
 
 export class Statement {

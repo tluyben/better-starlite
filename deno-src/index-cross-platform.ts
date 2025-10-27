@@ -13,7 +13,7 @@ export interface DatabaseOptions {
   verbose?: console.log | ((message?: any, ...additionalArgs: any[]) => void);
   nativeBinding?: string;
   disableWAL?: boolean;
-  rqliteLevel?: 'none' | 'weak' | 'strong';
+  rqliteLevel?: 'none' | 'weak' | 'linearizable';
   [key: string]: any;
 }
 
