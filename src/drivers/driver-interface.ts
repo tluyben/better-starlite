@@ -73,6 +73,12 @@ export interface DatabaseInterface {
   // Backup support (optional for some drivers)
   backup?(destination: string): Promise<Buffer>;
 
+  // Async operations (optional for async drivers like MySQL, PostgreSQL)
+  execAsync?(sql: string): Promise<this>;
+  transactionAsync?(fn: TransactionFunction): Promise<TransactionFunction>;
+  closeAsync?(): Promise<this>;
+  pragmaAsync?(sql: string, options?: PragmaOptions): Promise<any>;
+
   // Properties
   readonly inTransaction: boolean;
   readonly name: string;
@@ -90,6 +96,11 @@ export interface DriverOptions {
 
   // RQLite specific
   rqliteLevel?: 'none' | 'weak' | 'linearizable';
+
+  // Plugin options
+  schemaRewriter?: string; // Dialect name for schema rewriting (e.g., 'postgresql', 'mysql')
+  queryRewriter?: string;  // Dialect name for query rewriting (e.g., 'postgresql', 'mysql')
+  pluginOptions?: any;     // Options to pass to plugins
 
   // Better-sqlite3 specific options (kept generic)
   [key: string]: any;

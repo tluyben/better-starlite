@@ -1,113 +1,91 @@
 const { AsyncDatabase } = require('../dist/index');
 const fs = require('fs');
 
-// Clean up test database if exists
-if (fs.existsSync('test-async.db')) {
-  fs.unlinkSync('test-async.db');
-}
-
-async function runTests() {
-  console.log('Testing async better-starlite functionality...\n');
-
-  // Test 1: Local SQLite database with async API
-  console.log('Test 1: Async Local SQLite with WAL mode');
-  const db = new AsyncDatabase('test-async.db');
-
-  // Create table
-  await db.exec(`
-    CREATE TABLE users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      email TEXT UNIQUE NOT NULL
-    )
-  `);
-
-  // Verify WAL mode is enabled by default
-  const journalMode = await db.pragma('journal_mode');
-  console.log('Journal mode:', journalMode);
-  console.assert(journalMode[0].journal_mode === 'wal', 'WAL mode should be enabled by default');
-
-  // Test prepare and run
-  const insert = await db.prepare('INSERT INTO users (name, email) VALUES (?, ?)');
-  const result = await insert.run('Alice', 'alice@test.com');
-  console.log('Insert result:', result);
-  console.assert(result.changes === 1, 'Should have 1 change');
-  console.assert(result.lastInsertRowid === 1, 'Should have ID 1');
-
-  // Test get
-  const select = await db.prepare('SELECT * FROM users WHERE email = ?');
-  const user = await select.get('alice@test.com');
-  console.log('Retrieved user:', user);
-  console.assert(user.name === 'Alice', 'Should retrieve Alice');
-
-  // Test all
-  await insert.run('Bob', 'bob@test.com');
-  const selectAll = await db.prepare('SELECT * FROM users');
-  const users = await selectAll.all();
-  console.log('All users:', users);
-  console.assert(users.length === 2, 'Should have 2 users');
-
-  // Test async transaction
-  const insertMany = await db.transaction(async (users) => {
-    for (const user of users) {
-      await insert.run(user.name, user.email);
-    }
-    return users.length;
+describe('Async SQLite functionality', () => {
+  afterEach(() => {
+    // Clean up test databases after each test
+    ['test-async.db', 'test-async.db-wal', 'test-async.db-shm', 'test-nowal.db'].forEach(file => {
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+    });
   });
 
-  const count = await insertMany([
-    { name: 'Charlie', email: 'charlie@test.com' },
-    { name: 'Diana', email: 'diana@test.com' }
-  ]);
+  test('Async local SQLite database with WAL mode', async () => {
+    const db = new AsyncDatabase('test-async.db');
 
-  console.log('Inserted users in transaction:', count);
-  console.assert(count === 2, 'Should have inserted 2 users in transaction');
+    // Create table
+    await db.exec(`
+      CREATE TABLE users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL
+      )
+    `);
 
-  const allUsers = await selectAll.all();
-  console.log('After transaction:', allUsers);
-  console.assert(allUsers.length === 4, 'Should have 4 users after transaction');
+    // Verify WAL mode is enabled by default
+    const journalMode = await db.pragma('journal_mode');
+    expect(journalMode[0].journal_mode).toBe('wal');
 
-  // Test iterator
-  console.log('\nTesting async iterator:');
-  const iterator = await selectAll.iterate();
-  let iterCount = 0;
-  for await (const row of iterator) {
-    iterCount++;
-  }
-  console.assert(iterCount === 4, 'Iterator should yield 4 rows');
+    // Test prepare and run
+    const insert = await db.prepare('INSERT INTO users (name, email) VALUES (?, ?)');
+    const result = await insert.run('Alice', 'alice@test.com');
+    expect(result.changes).toBe(1);
+    expect(result.lastInsertRowid).toBe(1);
 
-  // Clean up
-  await db.close();
+    // Test get
+    const select = await db.prepare('SELECT * FROM users WHERE email = ?');
+    const user = await select.get('alice@test.com');
+    expect(user.name).toBe('Alice');
 
-  // Test 2: Memory database without WAL
-  console.log('\nTest 2: Async Memory database');
-  const memDb = new AsyncDatabase(':memory:');
-  await memDb.exec('CREATE TABLE test (id INTEGER)');
-  const memStmt = await memDb.prepare('INSERT INTO test VALUES (?)');
-  await memStmt.run(1);
-  const memSelect = await memDb.prepare('SELECT * FROM test');
-  const memResult = await memSelect.get();
-  console.assert(memResult.id === 1, 'Memory DB should work');
-  await memDb.close();
+    // Test all
+    await insert.run('Bob', 'bob@test.com');
+    const selectAll = await db.prepare('SELECT * FROM users');
+    const users = await selectAll.all();
+    expect(users.length).toBe(2);
 
-  // Test 3: Disable WAL explicitly
-  console.log('\nTest 3: Async database with WAL disabled');
-  const noWalDb = new AsyncDatabase('test-nowal.db', { disableWAL: true });
-  const noWalMode = await noWalDb.pragma('journal_mode');
-  console.log('Journal mode (WAL disabled):', noWalMode);
-  console.assert(noWalMode[0].journal_mode !== 'wal', 'WAL should be disabled when requested');
-  await noWalDb.close();
+    // Test async transaction
+    const insertMany = await db.transaction(async (users) => {
+      for (const user of users) {
+        await insert.run(user.name, user.email);
+      }
+      return users.length;
+    });
 
-  console.log('\n✅ All async tests passed!');
-  console.log('\nNote: The same AsyncDatabase class works with rqlite:');
-  console.log('  const rqliteDb = new AsyncDatabase("http://localhost:4001");');
-  console.log('  // All the same async methods work identically!');
-}
+    const count = await insertMany([
+      { name: 'Charlie', email: 'charlie@test.com' },
+      { name: 'Diana', email: 'diana@test.com' }
+    ]);
 
-runTests().catch(console.error).finally(() => {
-  // Clean up test databases
-  if (fs.existsSync('test-async.db')) fs.unlinkSync('test-async.db');
-  if (fs.existsSync('test-async.db-wal')) fs.unlinkSync('test-async.db-wal');
-  if (fs.existsSync('test-async.db-shm')) fs.unlinkSync('test-async.db-shm');
-  if (fs.existsSync('test-nowal.db')) fs.unlinkSync('test-nowal.db');
+    expect(count).toBe(2);
+
+    const allUsers = await selectAll.all();
+    expect(allUsers.length).toBe(4);
+
+    // Test iterator
+    const iterator = await selectAll.iterate();
+    let iterCount = 0;
+    for await (const row of iterator) {
+      iterCount++;
+    }
+    expect(iterCount).toBe(4);
+
+    await db.close();
+  });
+
+  test('Async memory database', async () => {
+    const memDb = new AsyncDatabase(':memory:');
+    await memDb.exec('CREATE TABLE test (id INTEGER)');
+    const memStmt = await memDb.prepare('INSERT INTO test VALUES (?)');
+    await memStmt.run(1);
+    const memSelect = await memDb.prepare('SELECT * FROM test');
+    const memResult = await memSelect.get();
+    expect(memResult.id).toBe(1);
+    await memDb.close();
+  });
+
+  test('Async database with WAL disabled', async () => {
+    const noWalDb = new AsyncDatabase('test-nowal.db', { disableWAL: true });
+    const noWalMode = await noWalDb.pragma('journal_mode');
+    expect(noWalMode[0].journal_mode).not.toBe('wal');
+    await noWalDb.close();
+  });
 });

@@ -1,15 +1,29 @@
 import BetterSqlite3 from 'better-sqlite3';
 import { RqliteClient } from './rqlite-client';
 import { DatabaseOptions } from './index';
+import { MySQLAsyncDatabase } from './drivers/mysql-async-driver';
+import { PostgreSQLAsyncDatabase } from './drivers/postgresql-async-driver';
+import { DatabaseInterface } from './drivers/driver-interface';
 
 export class AsyncStatement {
   private sqliteStmt?: BetterSqlite3.Statement;
   private rqliteClient?: RqliteClient;
+  private mysqlStmt?: any;
+  private postgresqlStmt?: any;
   private sql: string;
   private isWrite: boolean;
 
-  constructor(stmt: BetterSqlite3.Statement | { client: RqliteClient; sql: string; isWrite: boolean }) {
-    if ('client' in stmt) {
+  constructor(stmt: BetterSqlite3.Statement | { client: RqliteClient; sql: string; isWrite: boolean } | { type: 'mysql' | 'postgresql'; stmt: any }) {
+    if ('type' in stmt) {
+      // MySQL or PostgreSQL statement
+      if (stmt.type === 'mysql') {
+        this.mysqlStmt = stmt.stmt;
+      } else {
+        this.postgresqlStmt = stmt.stmt;
+      }
+      this.sql = stmt.stmt.source;
+      this.isWrite = !stmt.stmt.reader;
+    } else if ('client' in stmt) {
       this.rqliteClient = stmt.client;
       this.sql = stmt.sql;
       this.isWrite = stmt.isWrite;
@@ -23,6 +37,14 @@ export class AsyncStatement {
   async run(...params: any[]): Promise<BetterSqlite3.RunResult> {
     if (this.sqliteStmt) {
       return Promise.resolve(this.sqliteStmt.run(...params));
+    }
+
+    if (this.mysqlStmt) {
+      return await this.mysqlStmt.runAsync(...params);
+    }
+
+    if (this.postgresqlStmt) {
+      return await this.postgresqlStmt.runAsync(...params);
     }
 
     return new Promise((resolve, reject) => {
@@ -55,6 +77,14 @@ export class AsyncStatement {
       return Promise.resolve(this.sqliteStmt.get(...params));
     }
 
+    if (this.mysqlStmt) {
+      return await this.mysqlStmt.getAsync(...params);
+    }
+
+    if (this.postgresqlStmt) {
+      return await this.postgresqlStmt.getAsync(...params);
+    }
+
     const result = await this.rqliteClient!.queryAsync(this.sql, params);
     if (result.error) {
       throw new Error(result.error);
@@ -79,6 +109,14 @@ export class AsyncStatement {
   async all(...params: any[]): Promise<any[]> {
     if (this.sqliteStmt) {
       return Promise.resolve(this.sqliteStmt.all(...params));
+    }
+
+    if (this.mysqlStmt) {
+      return await this.mysqlStmt.allAsync(...params);
+    }
+
+    if (this.postgresqlStmt) {
+      return await this.postgresqlStmt.allAsync(...params);
     }
 
     const result = await this.rqliteClient!.queryAsync(this.sql, params);
@@ -169,14 +207,35 @@ export class AsyncStatement {
 export class AsyncDatabase {
   private sqliteDb?: BetterSqlite3.Database;
   private rqliteClient?: RqliteClient;
+  private mysqlDb?: DatabaseInterface;
+  private postgresqlDb?: DatabaseInterface;
   private options: DatabaseOptions;
+  private dbType: 'sqlite' | 'rqlite' | 'mysql' | 'postgresql' = 'sqlite';
 
   constructor(filename: string, options: DatabaseOptions = {}) {
     this.options = options;
 
-    if (filename.startsWith('http://') || filename.startsWith('https://')) {
+    if (filename.startsWith('mysql://')) {
+      this.dbType = 'mysql';
+      // Convert DatabaseOptions to DriverOptions
+      const driverOptions = {
+        ...options,
+        verbose: typeof options.verbose === 'function' ? false : options.verbose
+      };
+      this.mysqlDb = new MySQLAsyncDatabase(filename, driverOptions as any);
+    } else if (filename.startsWith('postgresql://') || filename.startsWith('postgres://')) {
+      this.dbType = 'postgresql';
+      // Convert DatabaseOptions to DriverOptions
+      const driverOptions = {
+        ...options,
+        verbose: typeof options.verbose === 'function' ? false : options.verbose
+      };
+      this.postgresqlDb = new PostgreSQLAsyncDatabase(filename, driverOptions as any);
+    } else if (filename.startsWith('http://') || filename.startsWith('https://')) {
+      this.dbType = 'rqlite';
       this.rqliteClient = new RqliteClient(filename);
     } else {
+      this.dbType = 'sqlite';
       this.sqliteDb = new BetterSqlite3(filename, options);
 
       if (!options.disableWAL && filename !== ':memory:') {
@@ -194,6 +253,16 @@ export class AsyncDatabase {
       return new AsyncStatement(this.sqliteDb.prepare(sql));
     }
 
+    if (this.mysqlDb) {
+      const stmt = this.mysqlDb.prepare(sql);
+      return new AsyncStatement({ type: 'mysql', stmt });
+    }
+
+    if (this.postgresqlDb) {
+      const stmt = this.postgresqlDb.prepare(sql);
+      return new AsyncStatement({ type: 'postgresql', stmt });
+    }
+
     const isWrite = /^\s*(INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|BEGIN|COMMIT|ROLLBACK)/i.test(sql);
     return new AsyncStatement({
       client: this.rqliteClient!,
@@ -205,6 +274,16 @@ export class AsyncDatabase {
   async exec(sql: string): Promise<this> {
     if (this.sqliteDb) {
       this.sqliteDb.exec(sql);
+      return this;
+    }
+
+    if (this.mysqlDb) {
+      await this.mysqlDb.execAsync!(sql);
+      return this;
+    }
+
+    if (this.postgresqlDb) {
+      await this.postgresqlDb.execAsync!(sql);
       return this;
     }
 
@@ -234,6 +313,14 @@ export class AsyncDatabase {
             });
         });
       };
+    }
+
+    if (this.mysqlDb) {
+      return await this.mysqlDb.transactionAsync!(fn);
+    }
+
+    if (this.postgresqlDb) {
+      return await this.postgresqlDb.transactionAsync!(fn);
     }
 
     return async (...args: any[]) => {
@@ -331,6 +418,15 @@ export class AsyncDatabase {
     if (this.sqliteDb) {
       this.sqliteDb.close();
     }
+
+    if (this.mysqlDb) {
+      await this.mysqlDb.closeAsync!();
+    }
+
+    if (this.postgresqlDb) {
+      await this.postgresqlDb.closeAsync!();
+    }
+
     return this;
   }
 
@@ -352,12 +448,24 @@ export class AsyncDatabase {
     if (this.sqliteDb) {
       return this.sqliteDb.inTransaction;
     }
+    if (this.mysqlDb) {
+      return this.mysqlDb.inTransaction;
+    }
+    if (this.postgresqlDb) {
+      return this.postgresqlDb.inTransaction;
+    }
     return false;
   }
 
   get name(): string {
     if (this.sqliteDb) {
       return this.sqliteDb.name;
+    }
+    if (this.mysqlDb) {
+      return this.mysqlDb.name;
+    }
+    if (this.postgresqlDb) {
+      return this.postgresqlDb.name;
     }
     return 'rqlite';
   }
@@ -366,6 +474,12 @@ export class AsyncDatabase {
     if (this.sqliteDb) {
       return this.sqliteDb.open;
     }
+    if (this.mysqlDb) {
+      return this.mysqlDb.open;
+    }
+    if (this.postgresqlDb) {
+      return this.postgresqlDb.open;
+    }
     return true;
   }
 
@@ -373,12 +487,24 @@ export class AsyncDatabase {
     if (this.sqliteDb) {
       return this.sqliteDb.readonly;
     }
+    if (this.mysqlDb) {
+      return this.mysqlDb.readonly;
+    }
+    if (this.postgresqlDb) {
+      return this.postgresqlDb.readonly;
+    }
     return false;
   }
 
   get memory(): boolean {
     if (this.sqliteDb) {
       return this.sqliteDb.memory;
+    }
+    if (this.mysqlDb) {
+      return this.mysqlDb.memory;
+    }
+    if (this.postgresqlDb) {
+      return this.postgresqlDb.memory;
     }
     return false;
   }
