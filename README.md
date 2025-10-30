@@ -1,24 +1,33 @@
 # better-*lite
 
-A unified async database interface for SQLite and RQLite that works in both Node.js and Deno. Write once, run anywhere - against local SQLite or distributed rqlite clusters.
+A unified async database interface for SQLite, RQLite, MySQL, and PostgreSQL that works in both Node.js and Deno. Write once, run anywhere - write SQLite syntax and run it against local SQLite, distributed rqlite clusters, MySQL, or PostgreSQL databases.
 
 **🚨 IMPORTANT: For cross-platform compatibility (Node.js + Deno), you MUST use the async interface. The synchronous API is Node.js-only for backward compatibility.**
 
 ## Features
 
 - 🎯 **Cross-platform** - Works in both Node.js and Deno
+- 🗄️ **Multi-Database Support** - SQLite, RQLite, MySQL, PostgreSQL with unified API
+- 🔄 **Write SQLite, Run Anywhere** - Plugin system automatically translates SQLite syntax to MySQL/PostgreSQL
 - 🌐 **Transparent rqlite support** - just use HTTP/HTTPS URLs
-- 🔄 **CR-SQLite support** - Offline-first apps with CRDT replication (NEW!)
-- ⚡ **Unified Async API** - modern Promise-based API for both SQLite and rqlite
+- 🔄 **CR-SQLite support** - Offline-first apps with CRDT replication
+- ⚡ **Unified Async API** - modern Promise-based API for all databases
 - 🚀 **Synchronous API** - Node.js-only, for better-sqlite3 compatibility
 - 📦 **Drizzle ORM support** included
 - 🔄 **WAL mode enabled by default** for better performance
+- 🔌 **Plugin System** - Extensible schema and query rewriting for any database
 
 ## Installation
 
 ### Node.js
 ```bash
 npm install better-starlite
+
+# For MySQL support
+npm install mysql2
+
+# For PostgreSQL support
+npm install pg
 ```
 
 ### Deno
@@ -33,6 +42,107 @@ npm install better-starlite @vlcn.io/crsqlite-wasm
 ```
 
 See [CR-SQLite Driver Documentation](docs/CR-SQLITE-DRIVER.md) for details.
+
+## Multi-Database Support: MySQL & PostgreSQL
+
+**Write SQLite syntax once, run on MySQL or PostgreSQL automatically!**
+
+The plugin system automatically translates SQLite schemas and queries to the target database's native syntax.
+
+### MySQL Usage
+
+```javascript
+const { AsyncDatabase } = require('better-starlite');
+const { registerAllPlugins } = require('better-starlite/dist/drivers/plugins');
+
+// Register plugins once at startup
+registerAllPlugins();
+
+async function main() {
+  // Connect to MySQL with SQLite compatibility
+  const db = new AsyncDatabase('mysql://user:password@localhost:3306/database', {
+    schemaRewriter: 'mysql',
+    queryRewriter: 'mysql'
+  });
+
+  // Write SQLite syntax - it gets translated automatically!
+  await db.exec(`
+    CREATE TABLE users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  // Becomes: id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255), created_at TIMESTAMP
+
+  const stmt = await db.prepare('INSERT INTO users (name, email) VALUES (?, ?)');
+  await stmt.run('Alice', 'alice@example.com');
+
+  const users = await db.prepare('SELECT * FROM users').all();
+  console.log(users);
+
+  await db.close();
+}
+```
+
+### PostgreSQL Usage
+
+```javascript
+const { AsyncDatabase } = require('better-starlite');
+const { registerAllPlugins } = require('better-starlite/dist/drivers/plugins');
+
+// Register plugins once at startup
+registerAllPlugins();
+
+async function main() {
+  // Connect to PostgreSQL with SQLite compatibility
+  const db = new AsyncDatabase('postgresql://user:password@localhost:5432/database', {
+    schemaRewriter: 'postgresql',
+    queryRewriter: 'postgresql'
+  });
+
+  // Write SQLite syntax - it gets translated automatically!
+  await db.exec(`
+    CREATE TABLE users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  // Becomes: id SERIAL PRIMARY KEY, name VARCHAR(255), created_at TIMESTAMP
+
+  const stmt = await db.prepare('INSERT INTO users (name, email) VALUES (?, ?)');
+  await stmt.run('Bob', 'bob@example.com');
+  // ? placeholders are converted to $1, $2, etc.
+
+  const users = await db.prepare('SELECT * FROM users').all();
+  console.log(users);
+
+  await db.close();
+}
+```
+
+### What Gets Translated
+
+The plugin system handles:
+
+**Schema Translations:**
+- `INTEGER PRIMARY KEY AUTOINCREMENT` → MySQL: `INT AUTO_INCREMENT PRIMARY KEY` / PostgreSQL: `SERIAL PRIMARY KEY`
+- `TEXT` → `VARCHAR(255)` (both databases)
+- `TEXT DEFAULT CURRENT_TIMESTAMP` → `TIMESTAMP DEFAULT CURRENT_TIMESTAMP`
+
+**Query Translations:**
+- `?` placeholders → PostgreSQL: `$1, $2, $3` (MySQL uses `?` natively)
+- Automatic dialect-specific optimizations
+
+**Benefits:**
+- ✅ Write portable SQLite code
+- ✅ Test locally with SQLite
+- ✅ Deploy to MySQL or PostgreSQL without code changes
+- ✅ Use the same codebase across different database backends
+- ✅ Perfect for libraries and frameworks that need database flexibility
 
 ## Cross-Platform Usage (RECOMMENDED)
 
@@ -207,6 +317,8 @@ better-starlite automatically detects the connection type:
 
 - **File paths** (e.g., `myapp.db`, `:memory:`) → Uses better-sqlite3
 - **HTTP/HTTPS URLs** (e.g., `http://localhost:4001`) → Uses rqlite client
+- **mysql:// URLs** (e.g., `mysql://user:pass@host:3306/db`) → Uses MySQL driver with plugin translation
+- **postgresql:// URLs** (e.g., `postgresql://user:pass@host:5432/db`) → Uses PostgreSQL driver with plugin translation
 
 ### Synchronous API
 The sync API uses `deasync` to provide better-sqlite3 compatible synchronous behavior for rqlite.
@@ -227,8 +339,27 @@ interface DatabaseOptions {
   // better-starlite specific
   disableWAL?: boolean;  // Disable WAL mode (enabled by default)
   rqliteLevel?: 'none' | 'weak' | 'linearizable';  // rqlite consistency level (see below)
+
+  // Plugin system (for MySQL/PostgreSQL)
+  schemaRewriter?: string;  // Enable schema translation plugin (e.g., 'mysql', 'postgresql')
+  queryRewriter?: string;   // Enable query translation plugin (e.g., 'mysql', 'postgresql')
 }
 ```
+
+### Plugin Options
+
+When using MySQL or PostgreSQL, specify the plugin names to enable automatic SQLite syntax translation:
+
+```javascript
+const db = new AsyncDatabase('mysql://localhost:3306/mydb', {
+  schemaRewriter: 'mysql',    // Translates CREATE TABLE, ALTER TABLE, etc.
+  queryRewriter: 'mysql'      // Translates queries if needed
+});
+```
+
+Available plugins:
+- `'mysql'` - For MySQL/MariaDB databases
+- `'postgresql'` - For PostgreSQL databases
 
 ### rqlite Consistency Levels
 
@@ -267,9 +398,36 @@ const db = new Database('http://localhost:4001', {
 Check the `examples/` directory for:
 - Synchronous API usage (better-sqlite3 compatible)
 - Asynchronous API usage (Promise-based)
+- MySQL and PostgreSQL integration examples
 - Drizzle ORM integration (sync and async)
 - Transaction examples
 - WAL mode configuration
+
+### Testing with Docker
+
+Run MySQL and PostgreSQL locally for testing:
+
+```bash
+# MySQL
+docker run -d -p 3306:3306 \
+  -e MYSQL_ROOT_PASSWORD=rootpass \
+  -e MYSQL_DATABASE=testdb \
+  -e MYSQL_USER=testuser \
+  -e MYSQL_PASSWORD=testpass \
+  mysql:8.0
+
+# PostgreSQL
+docker run -d -p 5432:5432 \
+  -e POSTGRES_USER=testuser \
+  -e POSTGRES_PASSWORD=testpass \
+  -e POSTGRES_DB=testdb \
+  postgres:16-alpine
+
+# Run tests against all databases
+npm test
+```
+
+The integration tests in `test/cross-database-integration.test.js` demonstrate the same code working identically across SQLite, MySQL, and PostgreSQL.
 
 ## License
 
