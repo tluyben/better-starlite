@@ -94,6 +94,10 @@ export interface DriverOptions {
   timeout?: number;
   disableWAL?: boolean;
 
+  // SQLite optimization (default: true)
+  // Runs performance-optimizing pragmas on connection start
+  serverOptimized?: boolean;
+
   // RQLite specific
   rqliteLevel?: 'none' | 'weak' | 'linearizable';
 

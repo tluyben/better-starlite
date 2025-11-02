@@ -5,6 +5,7 @@ type SqliteOptions = BetterSqlite3.Options;
 
 export interface DatabaseOptions extends SqliteOptions {
   disableWAL?: boolean;
+  serverOptimized?: boolean;
   rqliteLevel?: 'none' | 'weak' | 'linearizable';
   schemaRewriter?: string;
   queryRewriter?: string;
@@ -170,7 +171,35 @@ export default class Database {
     } else {
       this.sqliteDb = new BetterSqlite3(filename, options);
 
-      if (!options.disableWAL && filename !== ':memory:') {
+      // Apply server-optimized pragmas (default: true)
+      const serverOptimized = options.serverOptimized !== false;
+
+      if (serverOptimized) {
+        try {
+          // Core safety features
+          this.sqliteDb.pragma('foreign_keys = ON');
+          this.sqliteDb.pragma('recursive_triggers = ON');
+
+          // Performance optimizations (skip WAL for in-memory databases)
+          if (filename !== ':memory:' && !options.disableWAL) {
+            this.sqliteDb.pragma('journal_mode = WAL');
+            this.sqliteDb.pragma('synchronous = NORMAL');
+            this.sqliteDb.pragma('wal_autocheckpoint = 1000');
+          }
+
+          // Memory and cache optimizations
+          this.sqliteDb.pragma('cache_size = 10000');
+          this.sqliteDb.pragma('temp_store = MEMORY');
+          this.sqliteDb.pragma('busy_timeout = 30000');
+          this.sqliteDb.pragma('mmap_size = 268435456'); // 256MB
+
+          // Optimize database
+          this.sqliteDb.pragma('optimize');
+        } catch (e) {
+          // Silently ignore pragma errors to maintain compatibility
+        }
+      } else if (!options.disableWAL && filename !== ':memory:') {
+        // Legacy behavior: just enable WAL if not disabled
         try {
           this.sqliteDb.pragma('journal_mode = WAL');
         } catch (e) {

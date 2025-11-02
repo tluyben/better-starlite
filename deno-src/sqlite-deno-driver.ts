@@ -428,8 +428,37 @@ export class SqliteDenoDriver implements DriverFactory {
 
     const db = new this.DB(filename === ':memory:' ? ':memory:' : filename);
 
-    // Enable WAL mode if not disabled and not in-memory
-    if (!options.disableWAL && filename !== ':memory:') {
+    // Apply server-optimized pragmas (default: true)
+    const serverOptimized = options.serverOptimized !== false;
+
+    if (serverOptimized) {
+      try {
+        // Core safety features
+        db.query('PRAGMA foreign_keys = ON');
+        db.query('PRAGMA recursive_triggers = ON');
+
+        // Performance optimizations (skip WAL for in-memory databases)
+        if (filename !== ':memory:' && !options.disableWAL) {
+          db.query('PRAGMA journal_mode = WAL');
+          db.query('PRAGMA synchronous = NORMAL');
+          db.query('PRAGMA wal_autocheckpoint = 1000');
+        }
+
+        // Memory and cache optimizations
+        db.query('PRAGMA cache_size = 10000');
+        db.query('PRAGMA temp_store = MEMORY');
+        db.query('PRAGMA busy_timeout = 30000');
+        db.query('PRAGMA mmap_size = 268435456'); // 256MB
+
+        // Optimize database
+        db.query('PRAGMA optimize');
+      } catch (e) {
+        if (options.verbose) {
+          console.warn('Failed to apply server-optimized pragmas:', e);
+        }
+      }
+    } else if (!options.disableWAL && filename !== ':memory:') {
+      // Legacy behavior: just enable WAL if not disabled
       try {
         db.query('PRAGMA journal_mode = WAL');
       } catch (e) {
@@ -451,8 +480,37 @@ export class SqliteDenoDriver implements DriverFactory {
 
     const db = new this.DB(filename === ':memory:' ? ':memory:' : filename);
 
-    // Enable WAL mode if not disabled and not in-memory
-    if (!options.disableWAL && filename !== ':memory:') {
+    // Apply server-optimized pragmas (default: true)
+    const serverOptimized = options.serverOptimized !== false;
+
+    if (serverOptimized) {
+      try {
+        // Core safety features
+        db.query('PRAGMA foreign_keys = ON');
+        db.query('PRAGMA recursive_triggers = ON');
+
+        // Performance optimizations (skip WAL for in-memory databases)
+        if (filename !== ':memory:' && !options.disableWAL) {
+          db.query('PRAGMA journal_mode = WAL');
+          db.query('PRAGMA synchronous = NORMAL');
+          db.query('PRAGMA wal_autocheckpoint = 1000');
+        }
+
+        // Memory and cache optimizations
+        db.query('PRAGMA cache_size = 10000');
+        db.query('PRAGMA temp_store = MEMORY');
+        db.query('PRAGMA busy_timeout = 30000');
+        db.query('PRAGMA mmap_size = 268435456'); // 256MB
+
+        // Optimize database
+        db.query('PRAGMA optimize');
+      } catch (e) {
+        if (options.verbose) {
+          console.warn('Failed to apply server-optimized pragmas:', e);
+        }
+      }
+    } else if (!options.disableWAL && filename !== ':memory:') {
+      // Legacy behavior: just enable WAL if not disabled
       try {
         db.query('PRAGMA journal_mode = WAL');
       } catch (e) {

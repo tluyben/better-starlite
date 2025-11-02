@@ -218,8 +218,35 @@ export class SqliteNodeDriver implements DriverFactory {
 
     const db = new this.BetterSqlite3(filename, options);
 
-    // Enable WAL mode if not disabled and not in-memory
-    if (!options.disableWAL && filename !== ':memory:') {
+    // Apply server-optimized pragmas (default: true)
+    const serverOptimized = options.serverOptimized !== false;
+
+    if (serverOptimized) {
+      try {
+        // Core safety features
+        db.pragma('foreign_keys = ON');
+        db.pragma('recursive_triggers = ON');
+
+        // Performance optimizations (skip WAL for in-memory databases)
+        if (filename !== ':memory:' && !options.disableWAL) {
+          db.pragma('journal_mode = WAL');
+          db.pragma('synchronous = NORMAL');
+          db.pragma('wal_autocheckpoint = 1000');
+        }
+
+        // Memory and cache optimizations
+        db.pragma('cache_size = 10000');
+        db.pragma('temp_store = MEMORY');
+        db.pragma('busy_timeout = 30000');
+        db.pragma('mmap_size = 268435456'); // 256MB
+
+        // Optimize database
+        db.pragma('optimize');
+      } catch (e: any) {
+        // Silently ignore pragma errors to maintain compatibility
+      }
+    } else if (!options.disableWAL && filename !== ':memory:') {
+      // Legacy behavior: just enable WAL if not disabled
       try {
         db.pragma('journal_mode = WAL');
       } catch (e) {

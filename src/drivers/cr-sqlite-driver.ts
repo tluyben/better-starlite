@@ -459,6 +459,37 @@ export class CrSqliteDriver implements DriverFactory {
       db.exec(`SELECT crsql_siteid('${options.siteId}')`);
     }
 
+    // Apply server-optimized pragmas (default: true)
+    const serverOptimized = options.serverOptimized !== false;
+
+    if (serverOptimized) {
+      try {
+        // Core safety features
+        db.exec('PRAGMA foreign_keys = ON');
+        db.exec('PRAGMA recursive_triggers = ON');
+
+        // Performance optimizations (skip WAL for in-memory databases)
+        if (filename !== ':memory:' && !options.disableWAL) {
+          db.exec('PRAGMA journal_mode = WAL');
+          db.exec('PRAGMA synchronous = NORMAL');
+          db.exec('PRAGMA wal_autocheckpoint = 1000');
+        }
+
+        // Memory and cache optimizations
+        db.exec('PRAGMA cache_size = 10000');
+        db.exec('PRAGMA temp_store = MEMORY');
+        db.exec('PRAGMA busy_timeout = 30000');
+        db.exec('PRAGMA mmap_size = 268435456'); // 256MB
+
+        // Optimize database
+        db.exec('PRAGMA optimize');
+      } catch (e) {
+        if (options.verbose) {
+          console.warn('Failed to apply server-optimized pragmas:', e);
+        }
+      }
+    }
+
     if (options.verbose) {
       console.log(`CR-SQLite database created: ${filename}`);
       if (options.siteId) {
