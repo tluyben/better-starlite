@@ -186,6 +186,34 @@ describe('Cross-Database Integration Tests (Same Code, Different Databases)', ()
       await cleanupDatabase(db, 'PostgreSQL');
     }
   }, testTimeout);
+
+  // RQLite test - requires RQLite to be running
+  test('RQLite - Same code with RQLite (distributed SQLite)', async () => {
+    // Check if RQLite is available
+    let rqliteAvailable = false;
+    try {
+      const response = await fetch('http://localhost:4001/status');
+      if (response.ok) {
+        rqliteAvailable = true;
+      }
+    } catch (err) {
+      console.log('⏭️  Skipping RQLite test - RQLite not available:', err.message);
+    }
+
+    if (!rqliteAvailable) {
+      console.log('ℹ️  To run RQLite tests: docker run -d -p 4001:4001 -p 4002:4002 rqlite/rqlite -http-addr 0.0.0.0:4001 -raft-addr 0.0.0.0:4002');
+      return; // Skip test but don't fail
+    }
+
+    // RQLite is available - run the test!
+    const db = new AsyncDatabase('http://localhost:4001');
+
+    try {
+      await runDatabaseTests(db, 'RQLite');
+    } finally {
+      await cleanupDatabase(db, 'RQLite');
+    }
+  }, testTimeout);
 });
 
 describe('Plugin Translation Verification', () => {

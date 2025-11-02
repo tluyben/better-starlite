@@ -1,7 +1,14 @@
 /**
- * MySQL to SQLite Query Rewriter Plugin
+ * SQLite to MySQL Query Rewriter Plugin
  *
- * Translates MySQL queries to SQLite-compatible syntax
+ * IMPORTANT: This plugin translates SQLite queries TO MySQL syntax!
+ *
+ * Architecture:
+ * - Drizzle ORM generates SQLite queries (using sqlite-core schema)
+ * - This plugin rewrites them to MySQL-compatible syntax
+ * - The actual MySQL database receives the rewritten queries
+ *
+ * Direction: SQLite → MySQL (NOT the other way around!)
  */
 
 import {
@@ -11,47 +18,67 @@ import {
 
 export class MySQLQueryRewriter extends BaseQueryRewriter {
   readonly name = 'mysql-query';
-  readonly sourceDialect = 'mysql';
+  readonly sourceDialect = 'mysql';  // REGISTRY KEY - used to look up this plugin with getQueryPlugin('mysql')
+
+  // Store RETURNING clause info for emulation
+  public lastReturningInfo: { table: string; columns: string[] } | null = null;
 
   constructor(options: PluginOptions = {}) {
     super(options);
   }
 
   needsRewrite(sql: string): boolean {
-    const mysqlPatterns = [
-      /\bNOW\(\)/i,
-      /\bCURDATE\(\)/i,
-      /\bCURTIME\(\)/i,
-      /\bDATE_FORMAT\(/i,
-      /\bSTR_TO_DATE\(/i,
-      /\bDATE_ADD\(/i,
-      /\bDATE_SUB\(/i,
-      /\bTIMESTAMPDIFF\(/i,
-      /\bTIMESTAMPADD\(/i,
-      /\bCONCAT\(/i,
-      /\bCONCAT_WS\(/i,
-      /\bGROUP_CONCAT\(/i,
-      /\bIF\(/i,
-      /\bIFNULL\(/i,
-      /\bFIND_IN_SET\(/i,
-      /`/,  // Backticks
-      /\bLIMIT\s+\d+\s*,/i, // LIMIT offset, count
-      /\bREGEXP\b/i,
-      /\bRLIKE\b/i
+    // For SQLite → MySQL, we need to convert identifiers and handle some syntax differences
+    const sqlitePatterns = [
+      /"/,  // Double quotes (SQLite identifier style - need to convert to backticks for MySQL)
+      /\bRETURNING\b/i,  // RETURNING clause (not supported in older MySQL)
+      /insert.*values.*\(null,/i,  // INSERT with null as first value (likely auto-increment id)
     ];
 
-    return mysqlPatterns.some(pattern => pattern.test(sql));
+    return sqlitePatterns.some(pattern => pattern.test(sql));
   }
 
   rewriteQuery(sql: string): string {
-    this.log(`Rewriting MySQL query: ${sql.substring(0, 50)}...`);
+    this.log(`Rewriting SQLite to MySQL query: ${sql.substring(0, 50)}...`);
 
     let rewritten = sql;
 
-    // Replace backticks with double quotes
-    rewritten = rewritten.replace(/`/g, '"');
+    // Fix INSERT statements with null id (auto-increment columns) BEFORE converting quotes
+    // This must happen before quote conversion since it looks for "id"
+    rewritten = this.rewriteAutoIncrementInserts(rewritten);
 
-    // Rewrite date/time functions
+    // Convert double quotes to backticks (SQLite → MySQL identifier syntax)
+    rewritten = rewritten.replace(/"/g, '`');
+
+    // Handle RETURNING clause
+    // MySQL doesn't support RETURNING in the same way as PostgreSQL/SQLite
+    // Extract RETURNING info for emulation, then strip it
+    this.lastReturningInfo = null;
+    const returningMatch = rewritten.match(/\s+RETURNING\s+(.+?)(?:;|$)/i);
+    if (returningMatch) {
+      // Extract table name from the query
+      const tableMatch = rewritten.match(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+`([^`]+)`/i);
+      if (tableMatch) {
+        // Parse columns from RETURNING clause
+        const returningClause = returningMatch[1].trim();
+        const columns = returningClause.split(',').map((col: string) => {
+          // Remove backticks and trim
+          return col.trim().replace(/`/g, '');
+        });
+
+        this.lastReturningInfo = {
+          table: tableMatch[1],
+          columns: columns
+        };
+      }
+
+      this.log('RETURNING clause extracted for emulation');
+      rewritten = rewritten.replace(/\s+RETURNING\s+[^;]+/gi, '');
+    }
+
+    // Rewrite date/time functions (most are not needed for SQLite→MySQL)
+    // SQLite and MySQL have similar enough syntax that most queries work
+    // We'll keep this for edge cases
     rewritten = this.rewriteDateTimeFunctions(rewritten);
 
     // Rewrite string functions
@@ -69,12 +96,41 @@ export class MySQLQueryRewriter extends BaseQueryRewriter {
     // Rewrite operators
     rewritten = this.rewriteOperators(rewritten);
 
-    // Remove database name prefixes (database.table -> table)
-    rewritten = rewritten.replace(/\b(\w+)\.(\w+)\b/g, '$2');
+    // NOTE: Don't remove table.column qualifiers - they're valid and needed in MySQL!
+    // The regex /\b(\w+)\.(\w+)\b/g was matching both db.table AND table.column
+    // Only db.table should be removed if needed, but table.column must stay
 
     this.log(`Rewritten query: ${rewritten.substring(0, 50)}...`);
 
     return rewritten;
+  }
+
+  private rewriteAutoIncrementInserts(sql: string): string {
+    // Match INSERT statements with null as the first value (likely id column)
+    // Pattern: INSERT INTO "table" ("id", "col1", "col2") VALUES (null, $1, $2), (null, $3, $4), ...
+    const insertPattern = /insert\s+into\s+"([^"]+)"\s*\(("id"\s*,\s*[^)]+)\)\s*values\s*(.+?)(\s+returning\s+[^;]+|;|$)/gis;
+
+    const result = sql.replace(insertPattern, (match, table, columns, valuesSection, ending) => {
+      // Check if this INSERT has null values for id column
+      if (!valuesSection.includes('null')) {
+        return match; // No null values, return as-is
+      }
+
+      // Remove the "id" column from the column list
+      const newColumns = columns.replace(/"id"\s*,\s*/, '');
+
+      // Remove null from each value tuple: (null, ...) -> (...)
+      // This handles multi-row inserts: (null, v1, v2), (null, v3, v4)
+      const newValuesSection = valuesSection.replace(/\(\s*null\s*,\s*/g, '(');
+
+      return `insert into "${table}" (${newColumns}) values ${newValuesSection}${ending}`;
+    });
+
+    if (result !== sql) {
+      this.log('Stripped null id column from INSERT');
+    }
+
+    return result;
   }
 
   private rewriteDateTimeFunctions(sql: string): string {

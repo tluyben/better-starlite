@@ -4,6 +4,7 @@ import { DatabaseOptions } from './index';
 import { MySQLAsyncDatabase } from './drivers/mysql-async-driver';
 import { PostgreSQLAsyncDatabase } from './drivers/postgresql-async-driver';
 import { DatabaseInterface } from './drivers/driver-interface';
+import { registerAllPlugins } from './drivers/plugins';
 
 export class AsyncStatement {
   private sqliteStmt?: BetterSqlite3.Statement;
@@ -85,7 +86,9 @@ export class AsyncStatement {
       return await this.postgresqlStmt.getAsync(...params);
     }
 
-    const result = await this.rqliteClient!.queryAsync(this.sql, params);
+    // For RQLite, use executeAsync for write operations (e.g., INSERT/UPDATE/DELETE with RETURNING)
+    const endpoint = this.isWrite ? this.rqliteClient!.executeAsync.bind(this.rqliteClient!) : this.rqliteClient!.queryAsync.bind(this.rqliteClient!);
+    const result = await endpoint(this.sql, params);
     if (result.error) {
       throw new Error(result.error);
     }
@@ -119,7 +122,9 @@ export class AsyncStatement {
       return await this.postgresqlStmt.allAsync(...params);
     }
 
-    const result = await this.rqliteClient!.queryAsync(this.sql, params);
+    // For RQLite, use executeAsync for write operations (e.g., INSERT/UPDATE/DELETE with RETURNING)
+    const endpoint = this.isWrite ? this.rqliteClient!.executeAsync.bind(this.rqliteClient!) : this.rqliteClient!.queryAsync.bind(this.rqliteClient!);
+    const result = await endpoint(this.sql, params);
     if (result.error) {
       throw new Error(result.error);
     }
@@ -211,24 +216,38 @@ export class AsyncDatabase {
   private postgresqlDb?: DatabaseInterface;
   private options: DatabaseOptions;
   private dbType: 'sqlite' | 'rqlite' | 'mysql' | 'postgresql' = 'sqlite';
+  private static pluginsRegistered = false;
 
   constructor(filename: string, options: DatabaseOptions = {}) {
     this.options = options;
 
+    // Auto-register plugins FIRST, before creating any database instances
+    // (unless explicitly disabled)
+    if (!AsyncDatabase.pluginsRegistered && options.autoRegisterPlugins !== false) {
+      registerAllPlugins({ verbose: false });
+      AsyncDatabase.pluginsRegistered = true;
+    }
+
     if (filename.startsWith('mysql://')) {
       this.dbType = 'mysql';
       // Convert DatabaseOptions to DriverOptions
+      // Auto-inject schema/query rewriters if not explicitly specified
       const driverOptions = {
         ...options,
-        verbose: typeof options.verbose === 'function' ? false : options.verbose
+        verbose: typeof options.verbose === 'function' ? false : options.verbose,
+        schemaRewriter: options.schemaRewriter || 'mysql',
+        queryRewriter: options.queryRewriter || 'mysql'
       };
       this.mysqlDb = new MySQLAsyncDatabase(filename, driverOptions as any);
     } else if (filename.startsWith('postgresql://') || filename.startsWith('postgres://')) {
       this.dbType = 'postgresql';
       // Convert DatabaseOptions to DriverOptions
+      // Auto-inject schema/query rewriters if not explicitly specified
       const driverOptions = {
         ...options,
-        verbose: typeof options.verbose === 'function' ? false : options.verbose
+        verbose: typeof options.verbose === 'function' ? false : options.verbose,
+        schemaRewriter: options.schemaRewriter || 'postgresql',
+        queryRewriter: options.queryRewriter || 'postgresql'
       };
       this.postgresqlDb = new PostgreSQLAsyncDatabase(filename, driverOptions as any);
     } else if (filename.startsWith('http://') || filename.startsWith('https://')) {

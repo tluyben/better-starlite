@@ -1,7 +1,14 @@
 /**
- * PostgreSQL to SQLite Query Rewriter Plugin
+ * SQLite to PostgreSQL Query Rewriter Plugin
  *
- * Translates PostgreSQL queries to SQLite-compatible syntax
+ * IMPORTANT: This plugin translates SQLite queries TO PostgreSQL syntax!
+ *
+ * Architecture:
+ * - Drizzle ORM generates SQLite queries (using sqlite-core schema)
+ * - This plugin rewrites them to PostgreSQL-compatible syntax
+ * - The actual PostgreSQL database receives the rewritten queries
+ *
+ * Direction: SQLite → PostgreSQL (NOT the other way around!)
  */
 
 import {
@@ -11,76 +18,66 @@ import {
 
 export class PostgreSQLQueryRewriter extends BaseQueryRewriter {
   readonly name = 'postgresql-query';
-  readonly sourceDialect = 'postgresql';
+  readonly sourceDialect = 'postgresql';  // REGISTRY KEY - used to look up this plugin with getQueryPlugin('postgresql')
 
   constructor(options: PluginOptions = {}) {
     super(options);
   }
 
   needsRewrite(sql: string): boolean {
-    const pgPatterns = [
-      /\bNOW\(\)/i,
-      /\bCURRENT_DATE\b/i,
-      /\bCURRENT_TIME\b/i,
-      /\bTO_CHAR\(/i,
-      /\bTO_DATE\(/i,
-      /\bTO_TIMESTAMP\(/i,
-      /\bEXTRACT\(/i,
-      /\bDATE_TRUNC\(/i,
-      /\bCONCAT_WS\(/i,
-      /\bSTRING_AGG\(/i,
-      /\bARRAY_AGG\(/i,
-      /\bGENERATE_SERIES\(/i,
-      /::/,  // Type casting (::)
-      /\bISNULL\(/i,
-      /\bCOALESCE\(/i,
-      /\bGREATEST\(/i,
-      /\bLEAST\(/i,
-      /\|\|/,  // String concatenation operator
-      /\bRETURNING\b/i,
-      /\bLIMIT\s+\d+\s+OFFSET/i,
-      /\bBOOLEAN\b/i,
-      /\b(TRUE|FALSE)\b(?!\s*\))/i
+    // Check if we need to rewrite this query
+    const patterns = [
+      /insert.*values.*\(null,/i,  // INSERT with null as first value (likely auto-increment id)
     ];
 
-    return pgPatterns.some(pattern => pattern.test(sql));
+    return patterns.some(pattern => pattern.test(sql));
   }
 
   rewriteQuery(sql: string): string {
-    this.log(`Rewriting PostgreSQL query: ${sql.substring(0, 50)}...`);
+    this.log(`Rewriting SQLite to PostgreSQL query: ${sql.substring(0, 100)}...`);
 
     let rewritten = sql;
 
-    // Rewrite date/time functions
-    rewritten = this.rewriteDateTimeFunctions(rewritten);
+    // Fix INSERT statements with null id (auto-increment columns)
+    // Drizzle generates: INSERT INTO table ("id", "name") VALUES (null, 'value')
+    // PostgreSQL with SERIAL needs: INSERT INTO table ("name") VALUES ('value')
+    // OR: INSERT INTO table ("id", "name") VALUES (DEFAULT, 'value')
+    rewritten = this.rewriteAutoIncrementInserts(rewritten);
 
-    // Rewrite string functions
-    rewritten = this.rewriteStringFunctions(rewritten);
-
-    // Rewrite aggregate functions
-    rewritten = this.rewriteAggregateFunctions(rewritten);
-
-    // Rewrite type casting
-    rewritten = this.rewriteTypeCasting(rewritten);
-
-    // Rewrite operators
-    rewritten = this.rewriteOperators(rewritten);
-
-    // Rewrite boolean values
-    rewritten = this.rewriteBooleans(rewritten);
-
-    // Rewrite RETURNING clause
+    // Rewrite RETURNING clause (keep it - PostgreSQL supports it)
     rewritten = this.rewriteReturning(rewritten);
 
-    // Rewrite LIMIT/OFFSET
-    rewritten = this.rewriteLimitOffset(rewritten);
-
-    // Remove schemas from table/function names
-    rewritten = rewritten.replace(/\b(\w+)\.(\w+)\b/g, '$2');
-
-    this.log(`Rewritten query: ${rewritten.substring(0, 50)}...`);
+    this.log(`Rewritten query: ${rewritten.substring(0, 100)}...`);
 
     return rewritten;
+  }
+
+  private rewriteAutoIncrementInserts(sql: string): string {
+    // Match INSERT statements with null as the first value (likely id column)
+    // Pattern: INSERT INTO "table" ("id", "col1", "col2") VALUES (null, $1, $2), (null, $3, $4), ...
+    const insertPattern = /insert\s+into\s+"([^"]+)"\s*\(("id"\s*,\s*[^)]+)\)\s*values\s*(.+?)(\s+returning\s+[^;]+|;|$)/gis;
+
+    const result = sql.replace(insertPattern, (match, table, columns, valuesSection, ending) => {
+      // Check if this INSERT has null values for id column
+      if (!valuesSection.includes('null')) {
+        return match; // No null values, return as-is
+      }
+
+      // Remove the "id" column from the column list
+      const newColumns = columns.replace(/"id"\s*,\s*/, '');
+
+      // Remove null from each value tuple: (null, ...) -> (...)
+      // This handles multi-row inserts: (null, v1, v2), (null, v3, v4)
+      const newValuesSection = valuesSection.replace(/\(\s*null\s*,\s*/g, '(');
+
+      return `insert into "${table}" (${newColumns}) values ${newValuesSection}${ending}`;
+    });
+
+    if (result !== sql) {
+      this.log('Stripped null id column from INSERT');
+    }
+
+    return result;
   }
 
   private rewriteDateTimeFunctions(sql: string): string {
@@ -384,14 +381,9 @@ export class PostgreSQLQueryRewriter extends BaseQueryRewriter {
   }
 
   private rewriteReturning(sql: string): string {
-    // RETURNING clause is not supported in standard SQLite
-    if (sql.match(/\bRETURNING\b/i)) {
-      this.warn('RETURNING clause is not supported in standard SQLite. You may need to use a SELECT query after the INSERT/UPDATE/DELETE.');
-      // Remove the RETURNING clause for now
-      // In practice, drivers should handle this by issuing a follow-up query
-      return sql.replace(/\s+RETURNING\s+[^;]+/gi, '');
-    }
-
+    // PostgreSQL supports RETURNING clause natively - keep it!
+    // SQLite (via Drizzle) also uses RETURNING, and PostgreSQL supports it
+    // No rewriting needed for RETURNING clause
     return sql;
   }
 

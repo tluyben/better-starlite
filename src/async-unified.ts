@@ -142,7 +142,9 @@ export class AsyncStatement {
       return Promise.resolve(this.sqliteStmt.get(...params));
     }
 
-    const result = await this.rqliteClient!.queryAsync(this.sql, params);
+    // For RQLite, use executeAsync for write operations (e.g., INSERT/UPDATE/DELETE with RETURNING)
+    const endpoint = this.isWrite ? this.rqliteClient!.executeAsync.bind(this.rqliteClient!) : this.rqliteClient!.queryAsync.bind(this.rqliteClient!);
+    const result = await endpoint(this.sql, params);
     if (result.error) {
       throw new Error(result.error);
     }
@@ -168,7 +170,9 @@ export class AsyncStatement {
       return Promise.resolve(this.sqliteStmt.all(...params));
     }
 
-    const result = await this.rqliteClient!.queryAsync(this.sql, params);
+    // For RQLite, use executeAsync for write operations (e.g., INSERT/UPDATE/DELETE with RETURNING)
+    const endpoint = this.isWrite ? this.rqliteClient!.executeAsync.bind(this.rqliteClient!) : this.rqliteClient!.queryAsync.bind(this.rqliteClient!);
+    const result = await endpoint(this.sql, params);
     if (result.error) {
       throw new Error(result.error);
     }

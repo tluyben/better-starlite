@@ -82,11 +82,28 @@ services:
       timeout: 5s
       retries: 5
 
+  # RQLite - Distributed SQLite
+  rqlite:
+    image: rqlite/rqlite:latest
+    container_name: better-starlite-rqlite
+    ports:
+      - "4001:4001"
+      - "4002:4002"
+    command: -http-addr 0.0.0.0:4001 -raft-addr 0.0.0.0:4002
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:4001/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - rqlite_data:/rqlite/file
+
 volumes:
   postgres_data:
   mysql_data:
   oracle_data:
   mssql_data:
+  rqlite_data:
 
 networks:
   default:

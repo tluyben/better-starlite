@@ -6,127 +6,110 @@ export interface QueryResult {
   lastInsertRowid?: number;
 }
 
-export class BetterStarliteSession {
-  constructor(private db: AsyncDatabase) {}
+export function drizzle(database: AsyncDatabase, config?: any): any {
+  try {
+    const {
+      BaseSQLiteDatabase,
+      SQLiteAsyncDialect,
+      SQLiteSession,
+      SQLiteTransaction,
+    } = require('drizzle-orm/sqlite-core');
 
-  async prepareQuery(query: { sql: string; params?: unknown[] }) {
-    return query;
-  }
+    const dialect = new SQLiteAsyncDialect();
 
-  async execute(query: { sql: string; params?: unknown[] }): Promise<QueryResult> {
-    const stmt = await this.db.prepare(query.sql);
-    const params = query.params || [];
+    class BetterStarliteSession extends SQLiteSession<'async', any, any, any> {
+      constructor(private client: AsyncDatabase, dialect: any, schema: any) {
+        super('async', dialect, schema, { casing: config?.casing });
+      }
 
-    const isSelect = /^\s*SELECT/i.test(query.sql);
+      prepareQuery(query: any, fields: any, executeMethod: any, isResponseInArrayMode: boolean, customResultMapper?: any): any {
+        const client = this.client;
 
-    if (isSelect) {
-      const rows = await stmt.all(...params);
-      return { rows, rowsAffected: 0 };
-    } else {
-      const result = await stmt.run(...params);
-      return {
-        rows: [],
-        rowsAffected: result.changes,
-        lastInsertRowid: result.lastInsertRowid as number,
-      };
+        return {
+          async execute(placeholderValues?: Record<string, unknown>) {
+            const stmt = await client.prepare(query.sql);
+            const params = query.params || [];
+
+            // Check if this is a SELECT query
+            if (executeMethod === 'all') {
+              return await stmt.all(...params);
+            } else if (executeMethod === 'get') {
+              return await stmt.get(...params);
+            } else {
+              // run method for INSERT/UPDATE/DELETE
+              const result = await stmt.run(...params);
+              return { changes: result.changes, lastInsertRowid: result.lastInsertRowid };
+            }
+          },
+          async run(placeholderValues?: Record<string, unknown>) {
+            const stmt = await client.prepare(query.sql);
+            const params = query.params || [];
+            const result = await stmt.run(...params);
+            return { changes: result.changes, lastInsertRowid: result.lastInsertRowid };
+          },
+          async all(placeholderValues?: Record<string, unknown>) {
+            const stmt = await client.prepare(query.sql);
+            const params = query.params || [];
+            const rows = await stmt.all(...params);
+            return rows;
+          },
+          async get(placeholderValues?: Record<string, unknown>) {
+            const stmt = await client.prepare(query.sql);
+            const params = query.params || [];
+            const row = await stmt.get(...params);
+            return row;
+          },
+          async values(placeholderValues?: Record<string, unknown>) {
+            const stmt = await client.prepare(query.sql);
+            const params = query.params || [];
+            const rows = await stmt.all(...params);
+            return rows.map((row: any) => Object.values(row));
+          },
+        };
+      }
+
+      async transaction<T>(
+        transaction: (tx: any) => Promise<T>,
+        _config?: any
+      ): Promise<T> {
+        const tx = new BetterStarliteTransaction();
+        const wrapped = await this.client.transaction(() => transaction(tx));
+        return await wrapped();
+      }
     }
-  }
 
-  async all(query: { sql: string; params?: unknown[] }): Promise<{ rows: any[] }> {
-    const stmt = await this.db.prepare(query.sql);
-    const rows = await stmt.all(...(query.params || []));
-    return { rows };
-  }
+    const session = new BetterStarliteSession(database, dialect, config?.schema);
 
-  async get(query: { sql: string; params?: unknown[] }): Promise<{ rows: any[] }> {
-    const stmt = await this.db.prepare(query.sql);
-    const result = await stmt.get(...(query.params || []));
-    return { rows: result ? [result] : [] };
-  }
-
-  async run(query: { sql: string; params?: unknown[] }): Promise<QueryResult> {
-    const stmt = await this.db.prepare(query.sql);
-    const result = await stmt.run(...(query.params || []));
-    return {
-      rows: [],
-      rowsAffected: result.changes,
-      lastInsertRowid: result.lastInsertRowid as number,
-    };
-  }
-
-  async batch(queries: Array<{ sql: string; params?: unknown[] }>): Promise<QueryResult[]> {
-    const results: QueryResult[] = [];
-
-    const transaction = await this.db.transaction(async () => {
-      for (const query of queries) {
-        const result = await this.execute(query);
-        results.push(result);
-      }
-      return results;
-    });
-
-    return await transaction();
-  }
-
-  async transaction<T>(
-    fn: (tx: BetterStarliteTransaction) => Promise<T>
-  ): Promise<T> {
-    const tx = new BetterStarliteTransaction(this.db);
-    const wrapped = await this.db.transaction(() => fn(tx));
-    return await wrapped();
-  }
-}
-
-export class BetterStarliteTransaction extends BetterStarliteSession {
-  async transaction<T>(_fn: (tx: BetterStarliteTransaction) => Promise<T>): Promise<T> {
-    throw new Error('Cannot start a transaction within a transaction');
-  }
-}
-
-export function drizzle(database: AsyncDatabase): any {
-  const session = new BetterStarliteSession(database);
-
-  const proxy = new Proxy(session, {
-    get(target: any, prop: string | symbol) {
-      if (prop in target) {
-        const value = target[prop];
-        if (typeof value === 'function') {
-          return value.bind(target);
-        }
-        return value;
+    class BetterStarliteTransaction extends SQLiteTransaction<'async', any, any, any> {
+      constructor() {
+        super('async', dialect, session, config?.schema);
       }
 
-      try {
-        const drizzleCore = require('drizzle-orm');
-        const drizzleSqlite = require('drizzle-orm/sqlite-core');
-
-        if (prop in drizzleCore) {
-          return drizzleCore[prop];
-        }
-
-        if (prop in drizzleSqlite) {
-          return drizzleSqlite[prop];
-        }
-      } catch (_) {
-        // Drizzle not installed, continue
+      async transaction<T>(_transaction: (tx: any) => Promise<T>): Promise<T> {
+        throw new Error('Cannot start a transaction within a transaction');
       }
+    }
 
-      return undefined;
-    },
-  });
+    class BetterStarliteDatabase extends BaseSQLiteDatabase<'async', any, any> {
+      constructor() {
+        super('async', dialect, session, config?.schema);
+      }
+    }
 
-  Object.defineProperties(proxy, {
-    session: {
-      value: session,
-      writable: false,
-      enumerable: false,
-    },
-    $client: {
+    const db = new BetterStarliteDatabase();
+
+    // Attach the raw client for direct access if needed
+    Object.defineProperty(db, '$client', {
       value: database,
       writable: false,
       enumerable: false,
-    },
-  });
+    });
 
-  return proxy;
+    return db;
+  } catch (error) {
+    throw new Error(
+      'drizzle-orm is required to use the drizzle adapter. ' +
+      'Please install it with: npm install drizzle-orm'
+    );
+  }
 }

@@ -6,6 +6,9 @@ type SqliteOptions = BetterSqlite3.Options;
 export interface DatabaseOptions extends SqliteOptions {
   disableWAL?: boolean;
   rqliteLevel?: 'none' | 'weak' | 'linearizable';
+  schemaRewriter?: string;
+  queryRewriter?: string;
+  autoRegisterPlugins?: boolean;
 }
 
 export class Statement {

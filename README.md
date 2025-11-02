@@ -47,7 +47,9 @@ See [CR-SQLite Driver Documentation](docs/CR-SQLITE-DRIVER.md) for details.
 
 **Write SQLite syntax once, run on MySQL or PostgreSQL automatically!**
 
-The plugin system automatically translates SQLite schemas and queries to the target database's native syntax.
+**Translation Direction: SQLite → MySQL/PostgreSQL**
+
+The plugin system automatically translates SQLite schemas and queries TO the target database's native syntax. You write standard SQLite code, and the rewriters convert it to MySQL or PostgreSQL syntax on-the-fly. This is NOT the other way around - you don't write MySQL/PostgreSQL and get SQLite.
 
 ### MySQL Usage
 

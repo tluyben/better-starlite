@@ -24,13 +24,15 @@ import { PluginRegistry } from './plugin-interface';
 class MySQLAsyncStatement implements StatementInterface {
   private sql: string;
   private connection: any;
+  private database: any;
   private boundParams: any[] = [];
   private isPluck: boolean = false;
   private isRaw: boolean = false;
   private queryRewriter: any;
   private schemaRewriter: any;
 
-  constructor(connection: any, sql: string, queryRewriter?: any, schemaRewriter?: any) {
+  constructor(database: any, connection: any, sql: string, queryRewriter?: any, schemaRewriter?: any) {
+    this.database = database;
     this.connection = connection;
     this.sql = sql;
     this.queryRewriter = queryRewriter;
@@ -101,6 +103,9 @@ class MySQLAsyncStatement implements StatementInterface {
 
   // Async methods (these are what actually get called)
   async runAsync(...params: any[]): Promise<RunResult> {
+    // Wait for connection to be initialized
+    await this.database.initPromise;
+
     const actualParams = params.length > 0 ? params : this.boundParams;
     const rewrittenSQL = this.rewriteSQL(this.sql);
 
@@ -117,6 +122,9 @@ class MySQLAsyncStatement implements StatementInterface {
   }
 
   async getAsync(...params: any[]): Promise<any> {
+    // Wait for connection to be initialized
+    await this.database.initPromise;
+
     const actualParams = params.length > 0 ? params : this.boundParams;
     const rewrittenSQL = this.rewriteSQL(this.sql);
 
@@ -145,11 +153,68 @@ class MySQLAsyncStatement implements StatementInterface {
   }
 
   async allAsync(...params: any[]): Promise<any[]> {
+    // Wait for connection to be initialized
+    await this.database.initPromise;
+
     const actualParams = params.length > 0 ? params : this.boundParams;
-    const rewrittenSQL = this.rewriteSQL(this.sql);
+    let rewrittenSQL = this.rewriteSQL(this.sql);
 
     try {
-      const [rows]: any = await this.connection.execute(rewrittenSQL, actualParams);
+      // Ensure actualParams is an array
+      let paramsArray = Array.isArray(actualParams) ? actualParams : [];
+
+      // MySQL doesn't support ? placeholders in LIMIT/OFFSET with prepared statements
+      // We need to inline these values
+      if (rewrittenSQL.match(/\sLIMIT\s+\?/i)) {
+        if (rewrittenSQL.match(/\sOFFSET\s+\?/i)) {
+          // LIMIT ? OFFSET ?
+          const limit = paramsArray[paramsArray.length - 2];
+          const offset = paramsArray[paramsArray.length - 1];
+          rewrittenSQL = rewrittenSQL.replace(/\sLIMIT\s+\?/i, ` LIMIT ${limit}`);
+          rewrittenSQL = rewrittenSQL.replace(/\sOFFSET\s+\?/i, ` OFFSET ${offset}`);
+          paramsArray = paramsArray.slice(0, -2);
+        } else {
+          // LIMIT ? only
+          const limit = paramsArray[paramsArray.length - 1];
+          rewrittenSQL = rewrittenSQL.replace(/\sLIMIT\s+\?/i, ` LIMIT ${limit}`);
+          paramsArray = paramsArray.slice(0, -1);
+        }
+      }
+
+      const [result]: any = await this.connection.execute(rewrittenSQL, paramsArray);
+
+      // Check if this was a query with RETURNING clause that needs emulation
+      // Only check if the ORIGINAL query had RETURNING
+      const hadReturning = this.sql.toLowerCase().includes('returning');
+      const hasReturning = hadReturning && this.queryRewriter && this.queryRewriter.lastReturningInfo;
+
+      // If this was an INSERT/UPDATE/DELETE with RETURNING, emulate it
+      if (hasReturning) {
+        const { table, columns } = this.queryRewriter.lastReturningInfo;
+        // Clear the returning info so it doesn't affect subsequent queries
+        this.queryRewriter.lastReturningInfo = null;
+
+        // For INSERT: use LAST_INSERT_ID() to get the inserted rows
+        if (this.sql.trim().toLowerCase().startsWith('insert')) {
+          const insertId = result.insertId;
+          const affectedRows = result.affectedRows || 0;
+
+          if (insertId && affectedRows > 0) {
+            // Build SELECT query to fetch the inserted rows
+            // Wrap column names in backticks
+            const columnList = columns.map((col: string) => `\`${col}\``).join(', ');
+            const selectSQL = `SELECT ${columnList} FROM \`${table}\` WHERE \`id\` >= ${insertId} LIMIT ${affectedRows}`;
+            const [rows]: any = await this.connection.execute(selectSQL, []);
+            return rows;
+          }
+        }
+
+        // For UPDATE/DELETE: would need to capture rows before modification (not implemented yet)
+        return [];
+      }
+
+      // Regular SELECT query
+      const rows = result;
 
       if (this.isPluck) {
         return rows.map((row: any) => {
@@ -241,7 +306,7 @@ class MySQLAsyncDatabase implements DatabaseInterface {
     }
 
     // Note: prepare() is synchronous but returns a statement that will await initialization in its async methods
-    return new MySQLAsyncStatement(this.connection, sql, this.queryRewriter, this.schemaRewriter);
+    return new MySQLAsyncStatement(this, this.connection, sql, this.queryRewriter, this.schemaRewriter);
   }
 
   exec(sql: string): this {

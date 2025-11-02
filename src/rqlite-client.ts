@@ -157,11 +157,13 @@ export class RqliteClient {
     });
   }
 
-  transactionSync(fn: () => void): void {
+  transactionSync(fn: () => void | Promise<void>): void {
     let error: Error | null = null;
     let done = false;
 
-    this.transaction(fn)
+    this.transaction(async () => {
+      await fn();
+    })
       .then(() => {
         done = true;
       })
@@ -175,10 +177,10 @@ export class RqliteClient {
     if (error) throw error;
   }
 
-  private async transaction(fn: () => void): Promise<void> {
+  private async transaction(fn: () => Promise<void>): Promise<void> {
     await this.execute('BEGIN');
     try {
-      fn();
+      await fn();
       await this.execute('COMMIT');
     } catch (error) {
       await this.execute('ROLLBACK');
