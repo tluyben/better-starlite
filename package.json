@@ -27,7 +27,8 @@
     "test": "jest",
     "lint": "eslint . --ext .ts",
     "typecheck": "tsc --noEmit",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "fix-translation-errors": "node scripts/fix-translation-errors.js"
   },
   "keywords": [
     "sqlite",
