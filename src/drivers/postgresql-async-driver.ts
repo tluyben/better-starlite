@@ -17,6 +17,7 @@ import {
 } from './driver-interface';
 
 import { PluginRegistry } from './plugin-interface';
+import { SQLErrorLogger } from '../utils/sql-error-logger';
 
 /**
  * PostgreSQL Statement implementation (async)
@@ -38,26 +39,34 @@ class PostgreSQLAsyncStatement implements StatementInterface {
   }
 
   private rewriteSQL(sql: string): string {
-    let rewritten = sql;
+    try {
+      let rewritten = sql;
 
-    // Apply schema rewriting for DDL
-    if (this.schemaRewriter && /^\s*(CREATE|ALTER|DROP)/i.test(sql)) {
-      rewritten = this.schemaRewriter.rewriteSchema(sql);
+      // Apply schema rewriting for DDL
+      if (this.schemaRewriter && /^\s*(CREATE|ALTER|DROP)/i.test(sql)) {
+        rewritten = this.schemaRewriter.rewriteSchema(sql);
+      }
+
+      // Apply query rewriting for DML
+      if (this.queryRewriter && this.queryRewriter.needsRewrite(sql)) {
+        rewritten = this.queryRewriter.rewriteQuery(sql);
+      }
+
+      // Convert ? placeholders to PostgreSQL $1, $2, etc.
+      let placeholderIndex = 0;
+      rewritten = rewritten.replace(/\?/g, () => {
+        placeholderIndex++;
+        return `$${placeholderIndex}`;
+      });
+
+      return rewritten;
+    } catch (error: any) {
+      // Log the translation error
+      SQLErrorLogger.logTranslationError('postgresql', sql, error);
+
+      // Re-throw the error
+      throw new Error(`SQL translation failed: ${error.message}`);
     }
-
-    // Apply query rewriting for DML
-    if (this.queryRewriter && this.queryRewriter.needsRewrite(sql)) {
-      rewritten = this.queryRewriter.rewriteQuery(sql);
-    }
-
-    // Convert ? placeholders to PostgreSQL $1, $2, etc.
-    let placeholderIndex = 0;
-    rewritten = rewritten.replace(/\?/g, () => {
-      placeholderIndex++;
-      return `$${placeholderIndex}`;
-    });
-
-    return rewritten;
   }
 
   run(...params: any[]): RunResult {
@@ -110,7 +119,14 @@ class PostgreSQLAsyncStatement implements StatementInterface {
   // Async methods
   async runAsync(...params: any[]): Promise<RunResult> {
     const actualParams = params.length > 0 ? params : this.boundParams;
-    const rewrittenSQL = this.rewriteSQL(this.sql);
+    let rewrittenSQL: string;
+
+    try {
+      rewrittenSQL = this.rewriteSQL(this.sql);
+    } catch (error: any) {
+      // Translation error already logged in rewriteSQL
+      throw error;
+    }
 
     try {
       const result = await this.client.query(rewrittenSQL, actualParams);
@@ -120,13 +136,23 @@ class PostgreSQLAsyncStatement implements StatementInterface {
         lastInsertRowid: result.rows[0]?.id || 0
       };
     } catch (error: any) {
+      // Log the execution error with both original and rewritten SQL
+      SQLErrorLogger.logExecutionError('postgresql', this.sql, rewrittenSQL, error, actualParams);
+
       throw new Error(`PostgreSQL query error: ${error.message}`);
     }
   }
 
   async getAsync(...params: any[]): Promise<any> {
     const actualParams = params.length > 0 ? params : this.boundParams;
-    const rewrittenSQL = this.rewriteSQL(this.sql);
+    let rewrittenSQL: string;
+
+    try {
+      rewrittenSQL = this.rewriteSQL(this.sql);
+    } catch (error: any) {
+      // Translation error already logged in rewriteSQL
+      throw error;
+    }
 
     try {
       const result = await this.client.query(rewrittenSQL, actualParams);
@@ -148,13 +174,23 @@ class PostgreSQLAsyncStatement implements StatementInterface {
 
       return row;
     } catch (error: any) {
+      // Log the execution error
+      SQLErrorLogger.logExecutionError('postgresql', this.sql, rewrittenSQL, error, actualParams);
+
       throw new Error(`PostgreSQL query error: ${error.message}`);
     }
   }
 
   async allAsync(...params: any[]): Promise<any[]> {
     const actualParams = params.length > 0 ? params : this.boundParams;
-    const rewrittenSQL = this.rewriteSQL(this.sql);
+    let rewrittenSQL: string;
+
+    try {
+      rewrittenSQL = this.rewriteSQL(this.sql);
+    } catch (error: any) {
+      // Translation error already logged in rewriteSQL
+      throw error;
+    }
 
     try {
       const result = await this.client.query(rewrittenSQL, actualParams);
@@ -172,6 +208,9 @@ class PostgreSQLAsyncStatement implements StatementInterface {
 
       return result.rows;
     } catch (error: any) {
+      // Log the execution error
+      SQLErrorLogger.logExecutionError('postgresql', this.sql, rewrittenSQL, error, actualParams);
+
       throw new Error(`PostgreSQL query error: ${error.message}`);
     }
   }
@@ -243,13 +282,22 @@ class PostgreSQLAsyncDatabase implements DatabaseInterface {
     }
 
     let finalSQL = sql;
-    if (this.schemaRewriter && /^\s*(CREATE|ALTER|DROP)/i.test(sql)) {
-      finalSQL = this.schemaRewriter.rewriteSchema(sql);
+
+    try {
+      if (this.schemaRewriter && /^\s*(CREATE|ALTER|DROP)/i.test(sql)) {
+        finalSQL = this.schemaRewriter.rewriteSchema(sql);
+      }
+    } catch (error: any) {
+      // Log translation error
+      SQLErrorLogger.logTranslationError('postgresql', sql, error);
+      throw new Error(`SQL translation failed: ${error.message}`);
     }
 
     try {
       await this.client.query(finalSQL);
     } catch (error: any) {
+      // Log execution error
+      SQLErrorLogger.logExecutionError('postgresql', sql, finalSQL, error);
       throw new Error(`PostgreSQL exec error: ${error.message}`);
     }
 
