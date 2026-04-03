@@ -4,6 +4,7 @@
  */
 
 import { detectRuntime } from './runtime.ts';
+import { AsyncWriteMutex } from './write-mutex.ts';
 
 // Types that work across both environments
 export interface RunResult {
@@ -63,8 +64,8 @@ async function loadDrivers(): Promise<{
 
   if (runtime === 'deno') {
     // Deno environment
-    const { DenoDatabase } = await import('./drivers/deno-sqlite.ts');
-    const { DenoRqliteClient } = await import('./drivers/deno-rqlite-client.ts');
+    const { DenoDatabase } = await import('./deno-sqlite.ts');
+    const { DenoRqliteClient } = await import('./deno-rqlite-client.ts');
 
     return {
       createSqliteDriver: (filename: string, options: DatabaseOptions) => {
@@ -239,6 +240,8 @@ export class AsyncDatabase {
   private rqliteClient?: RqliteDriver;
   private options: DatabaseOptions;
   private driversPromise?: Promise<any>;
+  // Active only for SQLite backends; null for networked backends (rqlite, etc.)
+  private writeMutex: AsyncWriteMutex | null = null;
 
   constructor(filename: string, options: DatabaseOptions = {}) {
     this.options = options;
@@ -252,8 +255,11 @@ export class AsyncDatabase {
 
     if (filename.startsWith('http://') || filename.startsWith('https://')) {
       this.rqliteClient = drivers.createRqliteDriver(filename);
+      // Networked backends handle their own concurrency — no mutex needed.
     } else {
       this.sqliteDb = drivers.createSqliteDriver(filename, options);
+      // SQLite is single-connection; serialize writes to prevent interleaving.
+      this.writeMutex = new AsyncWriteMutex();
     }
   }
 
@@ -283,8 +289,8 @@ export class AsyncDatabase {
     await this.ensureInitialized();
 
     if (this.sqliteDb) {
-      this.sqliteDb.exec(sql);
-      return this;
+      const run = () => { this.sqliteDb!.exec(sql); return Promise.resolve(this); };
+      return this.writeMutex ? this.writeMutex.serialize(run) : run();
     }
 
     const statements = sql.split(';').filter(s => s.trim());
@@ -301,7 +307,8 @@ export class AsyncDatabase {
 
     if (this.sqliteDb) {
       const db = this.sqliteDb;
-      return async (...args: any[]) => {
+      // Inner wrapper runs the full BEGIN…fn…COMMIT/ROLLBACK sequence.
+      const inner = async (...args: any[]) => {
         db.exec('BEGIN');
         try {
           const result = await fn(...args);
@@ -312,6 +319,11 @@ export class AsyncDatabase {
           throw error;
         }
       };
+      // Hold the write mutex for the entire transaction so concurrent transactions
+      // cannot interleave their BEGIN/COMMIT with each other's async work.
+      if (!this.writeMutex) return inner;
+      const mutex = this.writeMutex;
+      return async (...args: any[]) => mutex.serialize(() => inner(...args));
     }
 
     return async (...args: any[]) => {
@@ -331,7 +343,8 @@ export class AsyncDatabase {
     await this.ensureInitialized();
 
     if (this.sqliteDb) {
-      return Promise.resolve(this.sqliteDb.pragma(sql, options));
+      const run = () => Promise.resolve(this.sqliteDb!.pragma(sql, options));
+      return this.writeMutex ? this.writeMutex.serialize(run) : run();
     }
 
     const pragmaMatch = sql.match(/^(\w+)(?:\s*=\s*(.+))?$/);
@@ -370,6 +383,31 @@ export class AsyncDatabase {
       });
       return obj;
     });
+  }
+
+  async upsert(
+    table: string,
+    cols: string[],
+    values: unknown[],
+    conflictCols: string[],
+    updateCols: string[],
+  ): Promise<{ changes: number; lastInsertRowid: number | bigint; created: boolean }> {
+    await this.ensureInitialized();
+    const whereClause = conflictCols.map(c => `${c} = ?`).join(' AND ');
+    const conflictValues = conflictCols.map(c => values[cols.indexOf(c)]);
+    const existStmt = await this.prepare(
+      `SELECT 1 FROM ${table} WHERE ${whereClause} LIMIT 1`,
+    );
+    const existing = await existStmt.get(...conflictValues);
+    const created = existing == null;
+    const placeholders = cols.map(() => '?').join(', ');
+    const onConflict = updateCols.length > 0
+      ? `ON CONFLICT(${conflictCols.join(', ')}) DO UPDATE SET ${updateCols.map(c => `${c}=excluded.${c}`).join(', ')}`
+      : `ON CONFLICT(${conflictCols.join(', ')}) DO NOTHING`;
+    const sql = `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders}) ${onConflict}`;
+    const stmt = await this.prepare(sql);
+    const result = await stmt.run(...values);
+    return { ...result, created };
   }
 
   async close(): Promise<this> {
@@ -425,6 +463,80 @@ export class AsyncDatabase {
     }
     return false;
   }
+
+  /**
+   * Dialect-neutral schema introspection.
+   * Use this instead of raw PRAGMA calls — works regardless of the underlying driver.
+   */
+  readonly introspect = {
+    tableExists: async (table: string): Promise<boolean> => {
+      await this.ensureInitialized();
+      const stmt = await this.prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name=?`
+      );
+      const row = await stmt.get(table);
+      return row != null;
+    },
+
+    getColumns: async (table: string): Promise<{
+      name: string; type: string; nullable: boolean; default: any; primaryKey: boolean;
+    }[]> => {
+      await this.ensureInitialized();
+      const stmt = await this.prepare(`PRAGMA table_info(${table})`);
+      const rows = await stmt.all();
+      return rows.map((r: any) => ({
+        name: r.name,
+        type: (r.type || '').toUpperCase(),
+        nullable: r.notnull === 0 || r.notnull === false,
+        default: r.dflt_value ?? null,
+        primaryKey: r.pk === 1 || r.pk === true,
+      }));
+    },
+
+    getIndexes: async (table: string): Promise<{
+      name: string; unique: boolean; columns: string[]; sql?: string;
+    }[]> => {
+      await this.ensureInitialized();
+      const listStmt = await this.prepare(`PRAGMA index_list(${table})`);
+      const indexList = await listStmt.all();
+      const result = [];
+      for (const idx of indexList) {
+        const infoStmt = await this.prepare(`PRAGMA index_info(${idx.name})`);
+        const cols = await infoStmt.all();
+        const masterStmt = await this.prepare(
+          `SELECT sql FROM sqlite_master WHERE type='index' AND name=?`
+        );
+        const masterRow = await masterStmt.get(idx.name);
+        result.push({
+          name: idx.name,
+          unique: idx.unique === 1 || idx.unique === true,
+          columns: cols.map((c: any) => c.name),
+          sql: masterRow?.sql ?? undefined,
+        });
+      }
+      return result;
+    },
+
+    getForeignKeys: async (table: string): Promise<{
+      column: string; refTable: string; refColumn: string;
+    }[]> => {
+      await this.ensureInitialized();
+      const stmt = await this.prepare(`PRAGMA foreign_key_list(${table})`);
+      const rows = await stmt.all();
+      return rows.map((r: any) => ({
+        column: r.from,
+        refTable: r.table,
+        refColumn: r.to,
+      }));
+    },
+
+    getDatabaseVersion: async (): Promise<string> => {
+      await this.ensureInitialized();
+      const stmt = await this.prepare(`SELECT sqlite_version() AS v`);
+      const row = await stmt.get();
+      return row?.v ?? 'unknown';
+    },
+  };
 }
 
 // Export a factory function for creating databases

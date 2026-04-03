@@ -25,7 +25,11 @@ export {
   RunResult,
   ColumnDefinition,
   PragmaOptions,
-  TransactionFunction
+  TransactionFunction,
+  SchemaIntrospector,
+  ColumnInfo,
+  IndexInfo,
+  ForeignKeyInfo
 } from './driver-interface';
 
 // Export driver factory functions (NOT the drivers themselves)

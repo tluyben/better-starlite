@@ -25,6 +25,40 @@ export interface PragmaOptions {
   simple?: boolean;
 }
 
+export interface ColumnInfo {
+  name: string;
+  type: string;
+  nullable: boolean;    // true = NULL allowed
+  default: any;         // raw default value string, or null
+  primaryKey: boolean;
+}
+
+export interface IndexInfo {
+  name: string;
+  unique: boolean;
+  columns: string[];
+  sql?: string;         // original CREATE INDEX SQL if available
+}
+
+export interface ForeignKeyInfo {
+  column: string;       // column in this table
+  refTable: string;     // referenced table
+  refColumn: string;    // referenced column
+}
+
+/**
+ * Dialect-neutral schema introspection.
+ * SQLite implements via PRAGMA; other drivers use information_schema or equivalent.
+ * minilive-storage uses this — never calls PRAGMA directly.
+ */
+export interface SchemaIntrospector {
+  tableExists(table: string): Promise<boolean>;
+  getColumns(table: string): Promise<ColumnInfo[]>;
+  getIndexes(table: string): Promise<IndexInfo[]>;
+  getForeignKeys(table: string): Promise<ForeignKeyInfo[]>;
+  getDatabaseVersion(): Promise<string>;
+}
+
 export interface StatementInterface {
   // Core execution methods
   run(...params: any[]): RunResult;

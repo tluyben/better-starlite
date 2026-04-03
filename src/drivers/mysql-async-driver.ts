@@ -17,14 +17,12 @@ import {
 } from './driver-interface';
 
 import { PluginRegistry } from './plugin-interface';
-import { SQLErrorLogger } from '../utils/sql-error-logger';
 
 /**
  * MySQL Statement implementation (async)
  */
 class MySQLAsyncStatement implements StatementInterface {
   private sql: string;
-  private connection: any;
   private database: any;
   private boundParams: any[] = [];
   private isPluck: boolean = false;
@@ -32,36 +30,25 @@ class MySQLAsyncStatement implements StatementInterface {
   private queryRewriter: any;
   private schemaRewriter: any;
 
-  constructor(database: any, connection: any, sql: string, queryRewriter?: any, schemaRewriter?: any) {
+  constructor(database: any, sql: string, queryRewriter?: any, schemaRewriter?: any) {
     this.database = database;
-    this.connection = connection;
     this.sql = sql;
     this.queryRewriter = queryRewriter;
     this.schemaRewriter = schemaRewriter;
   }
 
   private rewriteSQL(sql: string): string {
-    try {
-      let rewritten = sql;
-
-      // Apply schema rewriting for DDL
-      if (this.schemaRewriter && /^\s*(CREATE|ALTER|DROP)/i.test(sql)) {
-        rewritten = this.schemaRewriter.rewriteSchema(sql);
-      }
-
-      // Apply query rewriting for DML
-      if (this.queryRewriter && this.queryRewriter.needsRewrite(sql)) {
-        rewritten = this.queryRewriter.rewriteQuery(sql);
-      }
-
-      return rewritten;
-    } catch (error: any) {
-      // Log the translation error
-      SQLErrorLogger.logTranslationError('mysql', sql, error);
-
-      // Re-throw the error
-      throw new Error(`SQL translation failed: ${error.message}`);
+    // Apply schema rewriting for DDL
+    if (this.schemaRewriter && /^\s*(CREATE|ALTER|DROP)/i.test(sql)) {
+      return this.schemaRewriter.rewriteSchema(sql);
     }
+
+    // Apply query rewriting for DML
+    if (this.queryRewriter && this.queryRewriter.needsRewrite(sql)) {
+      return this.queryRewriter.rewriteQuery(sql);
+    }
+
+    return sql;
   }
 
   run(...params: any[]): RunResult {
@@ -118,26 +105,16 @@ class MySQLAsyncStatement implements StatementInterface {
     await this.database.initPromise;
 
     const actualParams = params.length > 0 ? params : this.boundParams;
-    let rewrittenSQL: string;
+    const rewrittenSQL = this.rewriteSQL(this.sql);
 
     try {
-      rewrittenSQL = this.rewriteSQL(this.sql);
-    } catch (error: any) {
-      // Translation error already logged in rewriteSQL
-      throw error;
-    }
-
-    try {
-      const [result]: any = await this.connection.execute(rewrittenSQL, actualParams);
+      const [result]: any = await this.database.pool.execute(rewrittenSQL, actualParams);
 
       return {
         changes: result.affectedRows || 0,
         lastInsertRowid: result.insertId || 0
       };
     } catch (error: any) {
-      // Log the execution error with both original and rewritten SQL
-      SQLErrorLogger.logExecutionError('mysql', this.sql, rewrittenSQL, error, actualParams);
-
       throw new Error(`MySQL query error: ${error.message}`);
     }
   }
@@ -147,17 +124,10 @@ class MySQLAsyncStatement implements StatementInterface {
     await this.database.initPromise;
 
     const actualParams = params.length > 0 ? params : this.boundParams;
-    let rewrittenSQL: string;
+    const rewrittenSQL = this.rewriteSQL(this.sql);
 
     try {
-      rewrittenSQL = this.rewriteSQL(this.sql);
-    } catch (error: any) {
-      // Translation error already logged in rewriteSQL
-      throw error;
-    }
-
-    try {
-      const [rows]: any = await this.connection.execute(rewrittenSQL, actualParams);
+      const [rows]: any = await this.database.pool.execute(rewrittenSQL, actualParams);
 
       if (rows.length === 0) {
         return undefined;
@@ -176,9 +146,6 @@ class MySQLAsyncStatement implements StatementInterface {
 
       return row;
     } catch (error: any) {
-      // Log the execution error
-      SQLErrorLogger.logExecutionError('mysql', this.sql, rewrittenSQL, error, actualParams);
-
       throw new Error(`MySQL query error: ${error.message}`);
     }
   }
@@ -188,14 +155,7 @@ class MySQLAsyncStatement implements StatementInterface {
     await this.database.initPromise;
 
     const actualParams = params.length > 0 ? params : this.boundParams;
-    let rewrittenSQL: string;
-
-    try {
-      rewrittenSQL = this.rewriteSQL(this.sql);
-    } catch (error: any) {
-      // Translation error already logged in rewriteSQL
-      throw error;
-    }
+    let rewrittenSQL = this.rewriteSQL(this.sql);
 
     try {
       // Ensure actualParams is an array
@@ -219,7 +179,7 @@ class MySQLAsyncStatement implements StatementInterface {
         }
       }
 
-      const [result]: any = await this.connection.execute(rewrittenSQL, paramsArray);
+      const [result]: any = await this.database.pool.execute(rewrittenSQL, paramsArray);
 
       // Check if this was a query with RETURNING clause that needs emulation
       // Only check if the ORIGINAL query had RETURNING
@@ -242,7 +202,7 @@ class MySQLAsyncStatement implements StatementInterface {
             // Wrap column names in backticks
             const columnList = columns.map((col: string) => `\`${col}\``).join(', ');
             const selectSQL = `SELECT ${columnList} FROM \`${table}\` WHERE \`id\` >= ${insertId} LIMIT ${affectedRows}`;
-            const [rows]: any = await this.connection.execute(selectSQL, []);
+            const [rows]: any = await this.database.pool.execute(selectSQL, []);
             return rows;
           }
         }
@@ -267,9 +227,6 @@ class MySQLAsyncStatement implements StatementInterface {
 
       return rows;
     } catch (error: any) {
-      // Log the execution error
-      SQLErrorLogger.logExecutionError('mysql', this.sql, rewrittenSQL, error, actualParams);
-
       throw new Error(`MySQL query error: ${error.message}`);
     }
   }
@@ -347,7 +304,7 @@ class MySQLAsyncDatabase implements DatabaseInterface {
     }
 
     // Note: prepare() is synchronous but returns a statement that will await initialization in its async methods
-    return new MySQLAsyncStatement(this, this.connection, sql, this.queryRewriter, this.schemaRewriter);
+    return new MySQLAsyncStatement(this, sql, this.queryRewriter, this.schemaRewriter);
   }
 
   exec(sql: string): this {
@@ -363,22 +320,13 @@ class MySQLAsyncDatabase implements DatabaseInterface {
     }
 
     let finalSQL = sql;
-
-    try {
-      if (this.schemaRewriter && /^\s*(CREATE|ALTER|DROP)/i.test(sql)) {
-        finalSQL = this.schemaRewriter.rewriteSchema(sql);
-      }
-    } catch (error: any) {
-      // Log translation error
-      SQLErrorLogger.logTranslationError('mysql', sql, error);
-      throw new Error(`SQL translation failed: ${error.message}`);
+    if (this.schemaRewriter && /^\s*(CREATE|ALTER|DROP)/i.test(sql)) {
+      finalSQL = this.schemaRewriter.rewriteSchema(sql);
     }
 
     try {
-      await this.connection.execute(finalSQL);
+      await this.pool.execute(finalSQL);
     } catch (error: any) {
-      // Log execution error
-      SQLErrorLogger.logExecutionError('mysql', sql, finalSQL, error);
       throw new Error(`MySQL exec error: ${error.message}`);
     }
 

@@ -1,8 +1,8 @@
 /**
- * Runtime detection utilities for Node.js, Deno, and Bun
+ * Runtime detection utilities for Node.js and Deno
  */
 
-export type Runtime = 'node' | 'deno' | 'bun' | 'unknown';
+export type Runtime = 'node' | 'deno' | 'unknown';
 
 /**
  * Detect the current runtime environment
@@ -11,11 +11,6 @@ export function detectRuntime(): Runtime {
   // Check for Deno
   if (typeof (globalThis as any).Deno !== 'undefined') {
     return 'deno';
-  }
-
-  // Check for Bun (must be before Node.js check since Bun has process.versions.node)
-  if (typeof (globalThis as any).Bun !== 'undefined') {
-    return 'bun';
   }
 
   // Check for Node.js

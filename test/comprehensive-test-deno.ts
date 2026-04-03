@@ -4,7 +4,7 @@
  * Run with: deno run --allow-read --allow-write --allow-net test/comprehensive-test-deno.ts
  */
 
-import { createDatabase } from '../src/async-unified-deno.ts';
+import { createDatabase } from '../deno-src/async-unified-deno.ts';
 
 let testsPassed = 0;
 let testsFailed = 0;

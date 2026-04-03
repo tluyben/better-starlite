@@ -3,8 +3,8 @@
  * This provides a better-sqlite3 compatible API using Deno's native SQLite module
  */
 
-// Import Deno SQLite module directly (will only work in Deno)
-import { DB } from 'https://deno.land/x/sqlite@v3.8/mod.ts';
+// Import Deno SQLite module from JSR (Deno 2.x compatible)
+import { Database as SqliteDB } from 'jsr:@db/sqlite@0.12';
 
 export interface DenoRunResult {
   changes: number;
@@ -12,38 +12,33 @@ export interface DenoRunResult {
 }
 
 export class DenoStatement {
-  private db: any; // Deno DB instance
+  private db: SqliteDB;
   private sql: string;
-  private stmt: any; // Prepared statement
+  private stmt: ReturnType<SqliteDB['prepare']> | null = null;
   private isReader: boolean;
   private pluckMode: boolean = false;
-  private expandMode: boolean = false;
   private rawMode: boolean = false;
-  private columnInfo: any[] | null = null;
 
-  constructor(db: any, sql: string) {
+  constructor(db: SqliteDB, sql: string) {
     this.db = db;
     this.sql = sql;
     this.isReader = !/^\s*(INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|BEGIN|COMMIT|ROLLBACK)/i.test(sql);
 
     // Prepare the statement
     try {
-      this.stmt = this.db.prepareQuery(sql);
-      // Cache column info
-      if (this.stmt && typeof this.stmt.columns === 'function') {
-        this.columnInfo = this.stmt.columns();
-      }
-    } catch (e) {
+      this.stmt = this.db.prepare(sql);
+    } catch (_e) {
       // If prepare fails, we'll execute directly
       this.stmt = null;
     }
   }
 
+  // deno-lint-ignore no-explicit-any
   run(...params: any[]): DenoRunResult {
     if (this.stmt) {
-      this.stmt.execute(params);
+      this.stmt.run(...params);
     } else {
-      this.db.query(this.sql, params);
+      this.db.exec(this.sql);
     }
 
     return {
@@ -52,67 +47,55 @@ export class DenoStatement {
     };
   }
 
+  // deno-lint-ignore no-explicit-any
   get(...params: any[]): any {
-    const results = this.stmt
-      ? Array.from(this.stmt.iter(params))
-      : Array.from(this.db.query(this.sql, params));
-
-    if (results.length === 0) {
+    if (!this.stmt) {
       return undefined;
     }
 
-    const row = results[0];
+    const row = this.stmt.get(...params);
 
-    if (this.pluckMode && Array.isArray(row)) {
-      return row[0];
+    if (row === undefined) {
+      return undefined;
     }
 
-    if (this.rawMode) {
-      return row;
+    if (this.pluckMode && typeof row === 'object' && row !== null) {
+      const values = Object.values(row);
+      return values.length > 0 ? values[0] : undefined;
     }
 
-    // Convert array to object if we have column names
-    if (Array.isArray(row) && this.columnInfo) {
-      const obj: any = {};
-      this.columnInfo.forEach((col: any, i: number) => {
-        const colName = col.name || col;
-        obj[colName] = row[i];
-      });
-      return obj;
+    if (this.rawMode && typeof row === 'object' && row !== null) {
+      return Object.values(row);
     }
 
-    // If no columns info, return as array
     return row;
   }
 
+  // deno-lint-ignore no-explicit-any
   all(...params: any[]): any[] {
-    const results = this.stmt
-      ? Array.from(this.stmt.iter(params))
-      : Array.from(this.db.query(this.sql, params));
+    if (!this.stmt) {
+      return [];
+    }
+
+    const results = this.stmt.all(...params);
 
     if (this.pluckMode) {
-      return results.map((row: any) => Array.isArray(row) ? row[0] : row);
+      // deno-lint-ignore no-explicit-any
+      return results.map((row: any) => {
+        const values = Object.values(row);
+        return values.length > 0 ? values[0] : undefined;
+      });
     }
 
     if (this.rawMode) {
-      return results;
-    }
-
-    // Convert arrays to objects if we have column names
-    if (results.length > 0 && Array.isArray(results[0]) && this.columnInfo) {
-      return results.map((row: any) => {
-        const obj: any = {};
-        this.columnInfo!.forEach((col: any, i: number) => {
-          const colName = col.name || col;
-          obj[colName] = row[i];
-        });
-        return obj;
-      });
+      // deno-lint-ignore no-explicit-any
+      return results.map((row: any) => Object.values(row));
     }
 
     return results;
   }
 
+  // deno-lint-ignore no-explicit-any
   iterate(...params: any[]): IterableIterator<any> {
     const rows = this.all(...params);
     return rows[Symbol.iterator]();
@@ -123,8 +106,8 @@ export class DenoStatement {
     return this;
   }
 
-  expand(toggleState?: boolean): this {
-    this.expandMode = toggleState !== false;
+  expand(_toggleState?: boolean): this {
+    // Not implemented for Deno
     return this;
   }
 
@@ -133,24 +116,19 @@ export class DenoStatement {
     return this;
   }
 
+  // deno-lint-ignore no-explicit-any
   columns(): any[] | undefined {
-    if (this.columnInfo) {
-      return this.columnInfo.map((col: any) => ({
-        name: col.name || col,
-        column: col.originName || null,
-        table: col.tableName || null,
-        database: null,
-        type: null,
-        default: null,
-        nullable: true
-      }));
+    if (!this.stmt) {
+      return undefined;
     }
+    // The JSR sqlite module returns column names via the result objects
+    // We don't have direct access to column metadata, so return undefined
     return undefined;
   }
 
-  bind(...params: any[]): this {
+  // deno-lint-ignore no-explicit-any
+  bind(..._params: any[]): this {
     // Deno SQLite doesn't support separate bind, parameters are passed at execution
-    // We could store them for later use if needed
     return this;
   }
 
@@ -166,7 +144,7 @@ export class DenoStatement {
     if (this.stmt && typeof this.stmt.finalize === 'function') {
       try {
         this.stmt.finalize();
-      } catch (e) {
+      } catch (_e) {
         // Ignore errors during finalization
       }
     }
@@ -174,33 +152,28 @@ export class DenoStatement {
 }
 
 export class DenoDatabase {
-  private db: any;
+  private db: SqliteDB;
   private filename: string;
   private isOpen: boolean = false;
-  private options: any;
+  private options: Record<string, unknown>;
   private statements: Set<DenoStatement> = new Set();
 
-  constructor(filename: string, options: any = {}) {
+  constructor(filename: string, options: Record<string, unknown> = {}) {
     this.filename = filename;
     this.options = options;
 
     // Open the database
     try {
-      this.db = new DB(filename === ':memory:' ? ':memory:' : filename);
+      this.db = new SqliteDB(filename === ':memory:' ? ':memory:' : filename);
       this.isOpen = true;
 
       // Enable WAL mode if not disabled and not in-memory
       if (!options.disableWAL && filename !== ':memory:') {
         try {
-          this.db.query('PRAGMA journal_mode = WAL');
-        } catch (e) {
-          console.warn('Failed to enable WAL mode:', e);
+          this.db.exec('PRAGMA journal_mode = WAL');
+        } catch (_e) {
+          // WAL mode might not be supported, continue anyway
         }
-      }
-
-      // Set other pragmas from options
-      if (options.verbose) {
-        console.log(`Opened database: ${filename}`);
       }
     } catch (e) {
       throw new Error(`Failed to open database: ${e}`);
@@ -220,18 +193,13 @@ export class DenoDatabase {
     if (!this.isOpen) {
       throw new Error('Database is closed');
     }
-
-    // Split and execute multiple statements
-    const statements = sql.split(';').filter(s => s.trim());
-    for (const stmt of statements) {
-      if (stmt.trim()) {
-        this.db.query(stmt);
-      }
-    }
+    this.db.exec(sql);
     return this;
   }
 
-  transaction(fn: (...args: any[]) => any): (...args: any[]) => any {
+  // deno-lint-ignore no-explicit-any
+  transaction<T>(fn: (...args: any[]) => T): (...args: any[]) => T {
+    // deno-lint-ignore no-explicit-any
     return (...args: any[]) => {
       this.exec('BEGIN');
       try {
@@ -245,7 +213,8 @@ export class DenoDatabase {
     };
   }
 
-  pragma(sql: string, options?: any): any {
+  // deno-lint-ignore no-explicit-any
+  pragma(sql: string, options?: { simple?: boolean }): any {
     const pragmaMatch = sql.match(/^(\w+)(?:\s*=\s*(.+))?$/);
     if (!pragmaMatch) {
       throw new Error('Invalid pragma statement');
@@ -257,71 +226,62 @@ export class DenoDatabase {
       query += ` = ${value}`;
     }
 
-    const results = Array.from(this.db.query(query));
+    const stmt = this.db.prepare(query);
+    // deno-lint-ignore no-explicit-any
+    const results = stmt.all() as any[];
 
     if (results.length === 0) {
       return options?.simple ? undefined : [];
     }
 
     if (options?.simple) {
-      return results[0][0];
+      const firstRow = results[0];
+      const values = Object.values(firstRow);
+      return values.length > 0 ? values[0] : undefined;
     }
 
-    // Convert to objects if we have multiple columns
-    const stmt = this.db.prepareQuery(query);
-    const columns = stmt.columns || [];
-    stmt.finalize();
-
-    if (columns.length > 1) {
-      return results.map(row => {
-        const obj: any = {};
-        columns.forEach((col: any, i: number) => {
-          obj[col.name || col] = row[i];
-        });
-        return obj;
-      });
-    }
-
-    return results;
+    // Return objects with the pragma key as the column name
+    // This matches better-sqlite3 behavior
+    // deno-lint-ignore no-explicit-any
+    return results.map((row: any) => {
+      const values = Object.values(row);
+      return { [key]: values.length > 0 ? values[0] : null };
+    });
   }
 
-  backup(destination: string): Promise<Buffer> {
+  backup(destination: string): Promise<Uint8Array> {
     // Deno doesn't have built-in backup like better-sqlite3
     // We can implement a simple file copy for file-based databases
     if (this.filename === ':memory:') {
       throw new Error('Cannot backup in-memory database');
     }
 
-    return (globalThis as any).Deno.readFile(this.filename)
+    return Deno.readFile(this.filename)
       .then((data: Uint8Array) => {
-        return (globalThis as any).Deno.writeFile(destination, data)
-          .then(() => Buffer.from(data));
+        return Deno.writeFile(destination, data)
+          .then(() => data);
       });
   }
 
+  // deno-lint-ignore no-explicit-any
   function(name: string, fn: (...args: any[]) => any): this;
-  function(name: string, options: any, fn: (...args: any[]) => any): this;
-  function(name: string, optionsOrFn: any, maybeFn?: any): this {
+  // deno-lint-ignore no-explicit-any
+  function(name: string, options: Record<string, any>, fn: (...args: any[]) => any): this;
+  // deno-lint-ignore no-explicit-any
+  function(name: string, optionsOrFn: ((...args: any[]) => any) | Record<string, any>, maybeFn?: (...args: any[]) => any): this {
     const fn = typeof optionsOrFn === 'function' ? optionsOrFn : maybeFn;
-    const options = typeof optionsOrFn === 'function' ? {} : optionsOrFn;
 
-    // Create a custom function in SQLite
-    this.db.createFunction(name, fn, {
-      deterministic: options.deterministic || false,
-      varargs: options.varargs || false
-    });
+    if (fn && typeof (this.db as any).function === 'function') {
+      (this.db as any).function(name, fn);
+    }
 
     return this;
   }
 
-  aggregate(name: string, options: any): this {
+  // deno-lint-ignore no-explicit-any
+  aggregate(name: string, _options: Record<string, any>): this {
     // Deno SQLite has limited support for custom aggregates
-    // We can implement basic support if the module supports it
-    if (typeof this.db.createAggregate === 'function') {
-      this.db.createAggregate(name, options);
-    } else {
-      console.warn(`Aggregate functions not fully supported in Deno SQLite`);
-    }
+    console.warn(`Aggregate functions not fully supported in Deno SQLite: ${name}`);
     return this;
   }
 
@@ -337,7 +297,7 @@ export class DenoDatabase {
       for (const stmt of this.statements) {
         try {
           stmt.finalize();
-        } catch (e) {
+        } catch (_e) {
           // Ignore finalization errors
         }
       }
@@ -350,7 +310,7 @@ export class DenoDatabase {
   }
 
   defaultSafeIntegers(_toggleState?: boolean): this {
-    // Deno handles BigInts differently, but we can track this preference
+    // Deno handles BigInts differently
     return this;
   }
 
@@ -361,10 +321,9 @@ export class DenoDatabase {
 
   get inTransaction(): boolean {
     try {
-      // Check if we're in a transaction by trying to start a savepoint
-      this.db.query('SAVEPOINT test');
-      this.db.query('RELEASE test');
-      return true;
+      // Check if we're in a transaction
+      const result = this.db.prepare('SELECT 1').get();
+      return result !== undefined;
     } catch {
       return false;
     }
@@ -379,7 +338,7 @@ export class DenoDatabase {
   }
 
   get readonly(): boolean {
-    return this.options.readonly || false;
+    return (this.options.readonly as boolean) || false;
   }
 
   get memory(): boolean {

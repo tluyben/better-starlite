@@ -3,14 +3,14 @@
  * This file is loaded only in Deno environments
  */
 
-import { DenoDatabase, DenoStatement } from './drivers/deno-sqlite.ts';
-import { DenoRqliteClient } from './drivers/deno-rqlite-client.ts';
+import { DenoDatabase, DenoStatement } from './deno-sqlite.ts';
+import { DenoRqliteClient } from './deno-rqlite-client.ts';
 
 export interface DatabaseOptions {
   readonly?: boolean;
   fileMustExist?: boolean;
   timeout?: number;
-  verbose?: console.log | ((message?: any, ...additionalArgs: any[]) => void);
+  verbose?: ((message?: unknown, ...additionalArgs: unknown[]) => void);
   nativeBinding?: string;
   disableWAL?: boolean;
   rqliteLevel?: 'none' | 'weak' | 'linearizable';
@@ -303,7 +303,7 @@ export class Database {
     });
   }
 
-  backup(destination: string): Promise<Buffer> {
+  backup(destination: string): Promise<Uint8Array> {
     if (this.sqliteDb) {
       return this.sqliteDb.backup(destination);
     }
