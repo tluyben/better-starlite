@@ -1,15 +1,16 @@
 # better-*lite
 
-A unified async database interface for SQLite, RQLite, MySQL, and PostgreSQL that works in both Node.js and Deno. Write once, run anywhere - write SQLite syntax and run it against local SQLite, distributed rqlite clusters, MySQL, or PostgreSQL databases.
+A unified async database interface for SQLite, RQLite, FlexDB, MySQL, and PostgreSQL that works in both Node.js and Deno. Write once, run anywhere - write SQLite syntax and run it against local SQLite, distributed rqlite clusters, a FlexDB cluster, MySQL, or PostgreSQL databases.
 
 **🚨 IMPORTANT: For cross-platform compatibility (Node.js + Deno), you MUST use the async interface. The synchronous API is Node.js-only for backward compatibility.**
 
 ## Features
 
 - 🎯 **Cross-platform** - Works in both Node.js and Deno
-- 🗄️ **Multi-Database Support** - SQLite, RQLite, MySQL, PostgreSQL with unified API
+- 🗄️ **Multi-Database Support** - SQLite, RQLite, FlexDB, MySQL, PostgreSQL with unified API
 - 🔄 **Write SQLite, Run Anywhere** - Plugin system automatically translates SQLite syntax to MySQL/PostgreSQL
 - 🌐 **Transparent rqlite support** - just use HTTP/HTTPS URLs
+- 🚀 **FlexDB distributed backend** - strongly-consistent Raft clusters with per-table consistency, native FTS, and snapshot backup
 - 🔄 **CR-SQLite support** - Offline-first apps with CRDT replication
 - ⚡ **Unified Async API** - modern Promise-based API for all databases
 - 🚀 **Synchronous API** - Node.js-only, for better-sqlite3 compatibility
@@ -307,18 +308,150 @@ Both sync and async versions support the same operations:
 - ✅ `await prepare()` - Prepare statements
 - ✅ `await exec()` - Execute SQL
 - ✅ `await transaction()` - Transaction support
-- ✅ `await pragma()` - Pragma commands
+- ✅ `await pragma()` - Pragma commands (no-op on FlexDB)
 - ✅ `await function()` - Custom functions (SQLite only)
 - ✅ `await aggregate()` - Custom aggregates (SQLite only)
-- ✅ `await backup()` - Backup support (SQLite only)
+- ✅ `await backup(dest)` - Backup to file (SQLite: VACUUM INTO; FlexDB: snapshot download)
 - ✅ Statement methods: `await run()`, `await get()`, `await all()`, `await iterate()`
 - ✅ Statement modifiers: `await pluck()`, `await expand()`, `await raw()`
+
+**FlexDB-only methods** (throw on other backends):
+- ✅ `await setTableMode(table, mode)` - Set per-table consistency
+- ✅ `await getTableMode(table)` - Get per-table consistency
+- ✅ `await enableSearch(table, columns)` - Enable native FTS on a table
+- ✅ `await disableSearch(table)` - Disable native FTS
+- ✅ `await getSearchConfig(table)` - Get indexed columns
+- ✅ `await search(table, query, limit?)` - Full-text search
+
+**Feature detection:**
+- ✅ `supportsFeature(feature)` - Returns `true` for FlexDB features (`'per-table-consistency'`, `'native-search'`, `'transactions'`, `'backup'`)
+
+## FlexDB — Distributed Storage Backend
+
+FlexDB is a Raft-based distributed SQLite-compatible database. Connect by passing a `flexdb://` URL to `createDatabase()`.
+
+### Connecting
+
+```javascript
+const { createDatabase } = require('better-starlite/dist/async-unified');
+
+// Single node
+const db = await createDatabase('flexdb://localhost:4001');
+
+// Multi-node cluster (round-robin load balancing)
+const db = await createDatabase('flexdb://node1:4001,node2:4001,node3:4001');
+
+// With auth token and options
+const db = await createDatabase('flexdb://localhost:4001', {
+  flexdb: {
+    authToken: 'my-secret-token',
+    timeoutMs: 10_000,
+    defaultConsistency: 'raft',
+    // Set per-table modes at connect time
+    tableModes: {
+      events:    'eventual',
+      counters:  'crdt',
+      configs:   'raft',
+    },
+  }
+});
+```
+
+### FlexDB-specific options (`flexdb` key in `DatabaseOptions`)
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `authToken` | `string` | — | Bearer token sent as `Authorization` header |
+| `timeoutMs` | `number` | `30000` | Per-request timeout in milliseconds |
+| `defaultConsistency` | `'raft' \| 'eventual' \| 'crdt'` | `'raft'` | Default consistency for all tables |
+| `tableModes` | `Record<string, ConsistencyMode>` | — | Per-table modes applied at connect time |
+
+### Per-table consistency
+
+| Mode | Consistency | Performance | Best for |
+|------|-------------|-------------|----------|
+| `'raft'` | Strongly consistent (default) | Moderate | Config, metadata, critical writes |
+| `'eventual'` | Eventually consistent | High throughput | Events, logs, analytics |
+| `'crdt'` | Conflict-free merge | High throughput | Counters, collaborative data |
+
+```javascript
+// Change a table's mode at runtime
+await db.setTableMode('events', 'eventual');
+await db.setTableMode('configs', 'raft');
+
+const mode = await db.getTableMode('events'); // → 'eventual'
+```
+
+### Native full-text search
+
+FlexDB has a native FTS engine. Columns indexed server-side are searched without loading data into the client.
+
+```javascript
+// Enable search on a table
+await db.enableSearch('articles', ['title', 'body']);
+
+// Search
+const results = await db.search('articles', 'distributed systems', 20);
+// → [{ id: 1, title: '...', body: '...', ... }, ...]
+
+// Get current search config
+const cols = await db.getSearchConfig('articles'); // → ['title', 'body']
+
+// Disable search
+await db.disableSearch('articles');
+```
+
+### Snapshot / backup
+
+```javascript
+// Download a raw SQLite snapshot from the cluster
+await db.backup('/tmp/snapshot.db');
+```
+
+### Feature detection
+
+```javascript
+db.supportsFeature('per-table-consistency'); // true on FlexDB, false elsewhere
+db.supportsFeature('native-search');         // true on FlexDB, false elsewhere
+db.supportsFeature('transactions');          // true on FlexDB, false elsewhere
+db.supportsFeature('backup');                // true on FlexDB, false elsewhere
+```
+
+### Transaction safety
+
+`transaction()` calls are serialised by `AsyncWriteMutex` — only one HTTP transaction session is active per `AsyncDatabase` instance at a time. All statements inside the closure automatically carry `X-Transaction-ID`.
+
+```javascript
+await db.transaction(async () => {
+  await (await db.prepare('INSERT INTO orders (user_id) VALUES (?)')).run(42);
+  await (await db.prepare('UPDATE inventory SET qty = qty - 1 WHERE id = ?')).run(99);
+});
+```
+
+### URL helper
+
+```typescript
+import { parseFlexDbUrl } from 'better-starlite/dist/drivers/flexdb-client';
+
+parseFlexDbUrl('flexdb://node1:4001,node2:4001')
+// → ['http://node1:4001', 'http://node2:4001']
+
+parseFlexDbUrl('flexdb://https://secure-node:4443')
+// → ['https://secure-node:4443']
+```
+
+### PRAGMA behaviour
+
+All `pragma()` calls are silently ignored on FlexDB — WAL, cache, and synchronous settings are managed by the cluster, not the client.
+
+---
 
 ## How it Works
 
 better-starlite automatically detects the connection type:
 
 - **File paths** (e.g., `myapp.db`, `:memory:`) → Uses better-sqlite3
+- **`flexdb://` URLs** (e.g., `flexdb://localhost:4001`) → Uses FlexDB HTTP client
 - **HTTP/HTTPS URLs** (e.g., `http://localhost:4001`) → Uses rqlite client
 - **mysql:// URLs** (e.g., `mysql://user:pass@host:3306/db`) → Uses MySQL driver with plugin translation
 - **postgresql:// URLs** (e.g., `postgresql://user:pass@host:5432/db`) → Uses PostgreSQL driver with plugin translation

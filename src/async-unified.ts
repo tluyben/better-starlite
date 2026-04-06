@@ -1,10 +1,11 @@
 /**
  * Unified async database interface for both Node.js and Deno
- * Works with both SQLite and RQLite in both environments
+ * Works with SQLite, RQLite, and FlexDB in all environments
  */
 
 import { detectRuntime } from './runtime';
 import { AsyncWriteMutex } from './write-mutex';
+import { FlexDbClient, parseFlexDbUrl, type ConsistencyMode, type FlexDbClientOptions } from './drivers/flexdb-client';
 
 // Types that work across both environments
 export interface RunResult {
@@ -20,8 +21,15 @@ export interface DatabaseOptions {
   nativeBinding?: string;
   disableWAL?: boolean;
   rqliteLevel?: 'none' | 'weak' | 'linearizable';
+  /** FlexDB-specific options. Ignored by all other drivers. */
+  flexdb?: FlexDbClientOptions;
   [key: string]: any;
 }
+
+/** Features exposed by AsyncDatabase beyond the base SQL API. */
+export type FlexDbFeature = 'per-table-consistency' | 'native-search' | 'transactions' | 'backup';
+
+export type { ConsistencyMode } from './drivers/flexdb-client';
 
 export interface ColumnDefinition {
   name: string;
@@ -35,6 +43,19 @@ export interface ColumnDefinition {
 
 export interface PragmaOptions {
   simple?: boolean;
+}
+
+// ─── Cross-platform file write helper ────────────────────────────────────────
+
+async function writeBytes(path: string, bytes: Uint8Array): Promise<void> {
+  const runtime = detectRuntime();
+  if (runtime === 'deno') {
+    await (globalThis as any).Deno.writeFile(path, bytes);
+  } else {
+    // Node.js / Bun
+    const { writeFile } = await import('fs/promises');
+    await writeFile(path, Buffer.from(bytes));
+  }
 }
 
 // Abstract interfaces for the database drivers
@@ -151,11 +172,21 @@ async function loadDrivers(): Promise<{
 export class AsyncStatement {
   private sqliteStmt?: any;
   private rqliteClient?: RqliteDriver;
+  private flexdbClient?: FlexDbClient;
   private sql: string;
   private isWrite: boolean;
 
-  constructor(stmt: any | { client: RqliteDriver; sql: string; isWrite: boolean }) {
-    if ('client' in stmt) {
+  constructor(
+    stmt:
+      | any
+      | { client: RqliteDriver; sql: string; isWrite: boolean }
+      | { flexdb: FlexDbClient; sql: string; isWrite: boolean },
+  ) {
+    if ('flexdb' in stmt) {
+      this.flexdbClient = stmt.flexdb;
+      this.sql = stmt.sql;
+      this.isWrite = stmt.isWrite;
+    } else if ('client' in stmt) {
       this.rqliteClient = stmt.client;
       this.sql = stmt.sql;
       this.isWrite = stmt.isWrite;
@@ -168,11 +199,18 @@ export class AsyncStatement {
 
   async run(...params: any[]): Promise<RunResult> {
     if (this.sqliteStmt) {
-      // For SQLite, wrap synchronous operation in a promise
       return Promise.resolve(this.sqliteStmt.run(...params));
     }
 
-    // For RQLite, use async operation
+    if (this.flexdbClient) {
+      const r = await this.flexdbClient.query(this.sql, params);
+      return {
+        changes: Number(r.rows_affected),
+        lastInsertRowid: r.last_insert_id ?? 0,
+      };
+    }
+
+    // RQLite path
     const result = await this.rqliteClient!.executeAsync(this.sql, params);
     if (result.error) {
       throw new Error(result.error);
@@ -194,7 +232,15 @@ export class AsyncStatement {
       return Promise.resolve(this.sqliteStmt.get(...params));
     }
 
-    // For RQLite, use executeAsync for write operations (e.g., INSERT/UPDATE/DELETE with RETURNING)
+    if (this.flexdbClient) {
+      const r = await this.flexdbClient.query(this.sql, params);
+      if (!r.rows || r.rows.length === 0) return undefined;
+      const obj: any = {};
+      r.columns.forEach((col, i) => { obj[col] = r.rows![0][i]; });
+      return obj;
+    }
+
+    // RQLite path
     const endpoint = this.isWrite ? this.rqliteClient!.executeAsync.bind(this.rqliteClient!) : this.rqliteClient!.queryAsync.bind(this.rqliteClient!);
     const result = await endpoint(this.sql, params);
     if (result.error) {
@@ -222,7 +268,17 @@ export class AsyncStatement {
       return Promise.resolve(this.sqliteStmt.all(...params));
     }
 
-    // For RQLite, use executeAsync for write operations (e.g., INSERT/UPDATE/DELETE with RETURNING)
+    if (this.flexdbClient) {
+      const r = await this.flexdbClient.query(this.sql, params);
+      if (!r.rows || r.rows.length === 0) return [];
+      return r.rows.map(row => {
+        const obj: any = {};
+        r.columns.forEach((col, i) => { obj[col] = row[i]; });
+        return obj;
+      });
+    }
+
+    // RQLite path
     const endpoint = this.isWrite ? this.rqliteClient!.executeAsync.bind(this.rqliteClient!) : this.rqliteClient!.queryAsync.bind(this.rqliteClient!);
     const result = await endpoint(this.sql, params);
     if (result.error) {
@@ -318,6 +374,13 @@ const fileMutexRegistry = new Map<string, AsyncWriteMutex>();
 export class AsyncDatabase {
   private sqliteDb?: SqliteDriver;
   private rqliteClient?: RqliteDriver;
+  /** FlexDB HTTP client — set when the URL starts with flexdb:// */
+  private flexdbClient?: FlexDbClient;
+  /**
+   * Write mutex for FlexDB — serialises transaction() calls so only one
+   * active transaction uses setActiveTxnId() at a time per instance.
+   */
+  private flexdbMutex?: AsyncWriteMutex;
   private options: DatabaseOptions;
   private driversPromise?: Promise<any>;
   // Active only for SQLite backends; null for networked backends (rqlite, etc.)
@@ -331,6 +394,18 @@ export class AsyncDatabase {
   }
 
   private async initialize(filename: string, options: DatabaseOptions) {
+    // FlexDB — must be checked before the generic http:// check
+    if (filename.startsWith('flexdb://')) {
+      const nodes = parseFlexDbUrl(filename);
+      this.flexdbClient = new FlexDbClient(nodes, options.flexdb ?? {});
+      this.flexdbMutex = new AsyncWriteMutex();
+      // Apply any startup table modes
+      if (options.flexdb?.tableModes) {
+        await this.flexdbClient.applyTableModes(options.flexdb.tableModes);
+      }
+      return;
+    }
+
     const drivers = await loadDrivers();
 
     if (filename.startsWith('http://') || filename.startsWith('https://')) {
@@ -369,6 +444,11 @@ export class AsyncDatabase {
     }
 
     const isWrite = /^\s*(INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|BEGIN|COMMIT|ROLLBACK)/i.test(sql);
+
+    if (this.flexdbClient) {
+      return new AsyncStatement({ flexdb: this.flexdbClient, sql, isWrite });
+    }
+
     return new AsyncStatement({
       client: this.rqliteClient!,
       sql,
@@ -384,6 +464,18 @@ export class AsyncDatabase {
       return this.writeMutex ? this.writeMutex.serialize(run) : run();
     }
 
+    if (this.flexdbClient) {
+      const statements = sql.split(';')
+        .map(s => s.trim())
+        .filter(s => s.length > 0)
+        .map(s => ({ sql: s }));
+      if (statements.length > 0) {
+        await this.flexdbClient.queryBatch(statements);
+      }
+      return this;
+    }
+
+    // RQLite path
     const statements = sql.split(';').filter(s => s.trim());
     for (const stmt of statements) {
       if (stmt.trim()) {
@@ -417,6 +509,27 @@ export class AsyncDatabase {
       return async (...args: any[]) => mutex.serialize(() => inner(...args));
     }
 
+    if (this.flexdbClient) {
+      const client = this.flexdbClient;
+      const mutex = this.flexdbMutex!;
+      return async (...args: any[]) =>
+        mutex.serialize(async () => {
+          const txnId = await client.beginTransaction();
+          client.setActiveTxnId(txnId);
+          try {
+            const result = await fn(...args);
+            await client.commitTransaction(txnId);
+            return result;
+          } catch (error) {
+            await client.rollbackTransaction(txnId).catch(() => {});
+            throw error;
+          } finally {
+            client.setActiveTxnId(undefined);
+          }
+        });
+    }
+
+    // RQLite path
     return async (...args: any[]) => {
       await this.exec('BEGIN');
       try {
@@ -436,6 +549,12 @@ export class AsyncDatabase {
     if (this.sqliteDb) {
       const run = () => Promise.resolve(this.sqliteDb!.pragma(sql, options));
       return this.writeMutex ? this.writeMutex.serialize(run) : run();
+    }
+
+    // FlexDB: silently ignore all PRAGMA calls. WAL / cache settings are
+    // FlexDB's internal concern and must not be sent as SQL.
+    if (this.flexdbClient) {
+      return options?.simple ? undefined : [];
     }
 
     const pragmaMatch = sql.match(/^(\w+)(?:\s*=\s*(.+))?$/);
@@ -528,7 +647,110 @@ export class AsyncDatabase {
     if (this.sqliteDb) {
       this.sqliteDb.close();
     }
+    // FlexDB is a remote server; no local connection to close.
     return this;
+  }
+
+  // ── Backup ────────────────────────────────────────────────────────────────
+
+  /**
+   * Backup the database to a local file path.
+   * - SQLite: uses better-sqlite3's native backup API.
+   * - FlexDB: downloads GET /v1/snapshot and writes bytes to `destination`.
+   */
+  async backup(destination: string): Promise<void> {
+    await this.ensureInitialized();
+
+    if (this.sqliteDb) {
+      await (this.sqliteDb as any).backup?.(destination);
+      return;
+    }
+
+    if (this.flexdbClient) {
+      const bytes = await this.flexdbClient.snapshot();
+      await writeBytes(destination, bytes);
+      return;
+    }
+
+    throw new Error('backup() is not supported for this driver');
+  }
+
+  // ── FlexDB-specific feature API ───────────────────────────────────────────
+
+  /**
+   * Returns true when the current backend supports the given capability.
+   * All FlexDB features return false on SQLite / RQLite.
+   */
+  supportsFeature(feature: FlexDbFeature): boolean {
+    if (!this.flexdbClient) return false;
+    switch (feature) {
+      case 'per-table-consistency': return true;
+      case 'native-search':         return true;
+      case 'transactions':          return true;
+      case 'backup':                return true;
+      default:                      return false;
+    }
+  }
+
+  // ── Search management ─────────────────────────────────────────────────────
+
+  /** Enable native FTS on the given columns of `table`. No-op on non-FlexDB. */
+  async enableSearch(table: string, columns: string[]): Promise<void> {
+    await this.ensureInitialized();
+    this._requireFlexDb('enableSearch');
+    await this.flexdbClient!.enableSearch(table, columns);
+  }
+
+  /** Disable native FTS on `table`. No-op on non-FlexDB. */
+  async disableSearch(table: string): Promise<void> {
+    await this.ensureInitialized();
+    this._requireFlexDb('disableSearch');
+    await this.flexdbClient!.disableSearch(table);
+  }
+
+  /**
+   * Return the columns that have native search enabled on `table`,
+   * or null if no search is configured.
+   */
+  async getSearchConfig(table: string): Promise<string[]> {
+    await this.ensureInitialized();
+    this._requireFlexDb('getSearchConfig');
+    return await this.flexdbClient!.getSearchConfig(table);
+  }
+
+  /**
+   * Full-text search using FlexDB's native search index.
+   * Returns rows as plain objects (same shape as `.all()`).
+   */
+  async search(table: string, query: string, limit = 20): Promise<any[]> {
+    await this.ensureInitialized();
+    this._requireFlexDb('search');
+    return this.flexdbClient!.search(table, query, limit);
+  }
+
+  // ── Consistency management ────────────────────────────────────────────────
+
+  /** Set the consistency mode for `table` on the FlexDB cluster. */
+  async setTableMode(table: string, mode: ConsistencyMode): Promise<void> {
+    await this.ensureInitialized();
+    this._requireFlexDb('setTableMode');
+    await this.flexdbClient!.setTableMode(table, mode);
+  }
+
+  /** Get the current consistency mode for `table` on the FlexDB cluster. */
+  async getTableMode(table: string): Promise<ConsistencyMode> {
+    await this.ensureInitialized();
+    this._requireFlexDb('getTableMode');
+    return this.flexdbClient!.getTableMode(table);
+  }
+
+  private _requireFlexDb(method: string): void {
+    if (!this.flexdbClient) {
+      throw new Error(
+        `${method}() is only supported on FlexDB backends (flexdb:// URL). ` +
+        `Current backend does not support this operation.`,
+      );
+    }
   }
 
   async getInTransaction(): Promise<boolean> {
@@ -536,6 +758,9 @@ export class AsyncDatabase {
 
     if (this.sqliteDb) {
       return this.sqliteDb.inTransaction;
+    }
+    if (this.flexdbClient) {
+      return this.flexdbClient.getActiveTxnId() !== undefined;
     }
     return false;
   }
@@ -545,6 +770,9 @@ export class AsyncDatabase {
 
     if (this.sqliteDb) {
       return this.sqliteDb.name;
+    }
+    if (this.flexdbClient) {
+      return 'flexdb';
     }
     return 'rqlite';
   }

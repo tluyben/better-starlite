@@ -42,7 +42,7 @@ export {
  * @param drivers - Array of driver names to try to register
  */
 export async function autoRegisterDrivers(drivers?: string[]): Promise<void> {
-  const driversToTry = drivers || ['sqlite-node', 'sqlite-deno', 'cr-sqlite', 'rqlite', 'dummy'];
+  const driversToTry = drivers || ['sqlite-node', 'sqlite-deno', 'cr-sqlite', 'rqlite', 'flexdb', 'dummy'];
 
   for (const driverName of driversToTry) {
     try {
@@ -82,6 +82,30 @@ export async function autoRegisterDrivers(drivers?: string[]): Promise<void> {
           }
           break;
 
+        case 'flexdb':
+          // FlexDB is detected by URL scheme (flexdb://) in async-unified.ts;
+          // we register a metadata entry here so tooling can discover it.
+          if (typeof fetch !== 'undefined') {
+            DriverRegistry.register('flexdb', {
+              name: 'flexdb',
+              features: {
+                backup: true,
+                loadExtension: false,
+                customFunctions: false,
+                customAggregates: false,
+                transactions: true,
+                wal: false,
+              },
+              isAvailable: () => typeof fetch !== 'undefined',
+              createDatabase: () => {
+                throw new Error(
+                  'Use createDatabase("flexdb://...", options) from async-unified instead',
+                );
+              },
+            } as any);
+          }
+          break;
+
         case 'dummy':
           const { createDummyDriver } = await import('./dummy-driver');
           const driver = createDummyDriver();
@@ -100,7 +124,7 @@ export async function autoRegisterDrivers(drivers?: string[]): Promise<void> {
  * Note: This won't work for Deno's SQLite driver which requires async import.
  */
 export function autoRegisterDriversSync(drivers?: string[]): void {
-  const driversToTry = drivers || ['sqlite-node', 'cr-sqlite', 'rqlite', 'dummy'];
+  const driversToTry = drivers || ['sqlite-node', 'cr-sqlite', 'rqlite', 'flexdb', 'dummy'];
 
   for (const driverName of driversToTry) {
     try {
@@ -134,6 +158,17 @@ export function autoRegisterDriversSync(drivers?: string[]): void {
             if (driver.isAvailable()) {
               DriverRegistry.register('rqlite', driver);
             }
+          }
+          break;
+
+        case 'flexdb':
+          if (typeof fetch !== 'undefined') {
+            DriverRegistry.register('flexdb', {
+              name: 'flexdb',
+              features: { backup: true, loadExtension: false, customFunctions: false, customAggregates: false, transactions: true, wal: false },
+              isAvailable: () => typeof fetch !== 'undefined',
+              createDatabase: () => { throw new Error('Use createDatabase("flexdb://...", options) from async-unified instead'); },
+            } as any);
           }
           break;
 
