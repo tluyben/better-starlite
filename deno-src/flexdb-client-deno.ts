@@ -1,15 +1,14 @@
 /**
- * FlexDB client adapter for better-starlite (Node.js).
+ * FlexDB client adapter for better-starlite (Deno).
  *
- * Wraps the `flexdb-node` SDK so that async-unified.ts does not call
- * raw REST endpoints directly.  The public surface of FlexDbClient is
- * intentionally kept identical to the previous hand-rolled version so
- * that no call-sites in async-unified.ts need to change.
- *
- * For the Deno build see deno-src/flexdb-client-deno.ts.
+ * Wraps the local @tychoish/flexdb SDK so that async-unified-deno.ts does
+ * not call raw REST endpoints directly.  The public surface is intentionally
+ * identical to the Node.js version (src/drivers/flexdb-client.ts) so the
+ * two async-unified files stay in sync.
  */
 
-import { FlexDBClient } from 'flexdb-node';
+// Import directly from client.ts to avoid the cluster_file.ts → @std/path dependency.
+import { FlexDBClient } from '../../3rdparty/flexdb-deno/src/client.ts';
 import type {
   AnalyticsGetResponse,
   AnalyticsListResponse,
@@ -18,7 +17,7 @@ import type {
   NodesResponse,
   Statement as SDKStatement,
   TransactionHandle,
-} from 'flexdb-node';
+} from '../../3rdparty/flexdb-deno/src/types.ts';
 
 export type ConsistencyMode = 'raft' | 'eventual' | 'crdt';
 
@@ -30,8 +29,6 @@ export interface FlexDbClientOptions {
   tableModes?: Record<string, ConsistencyMode>;
 }
 
-// ─── Wire types (kept for backward compat with async-unified.ts) ─────────────
-
 export interface FlexDbQueryResult {
   columns: string[];
   rows: any[][];
@@ -41,13 +38,10 @@ export interface FlexDbQueryResult {
   error?: string;
 }
 
-// ─── Adapter ──────────────────────────────────────────────────────────────────
-
 export class FlexDbClient {
   private readonly sdk: FlexDBClient;
   private readonly nodes: string[];
   private readonly options: FlexDbClientOptions;
-  /** The active TransactionHandle while inside a BEGIN/COMMIT block. */
   private activeTxn: TransactionHandle | undefined;
 
   constructor(nodes: string[], options: FlexDbClientOptions = {}) {
@@ -64,9 +58,8 @@ export class FlexDbClient {
 
   // ── Core query ──────────────────────────────────────────────────────────────
 
-  /** Execute a single SQL statement, returning its result. */
   async query(sql: string, params: any[] = []): Promise<FlexDbQueryResult> {
-    const stmt: SDKStatement[] = [{ sql, params: params as SDKStatement['params'] }];
+    const stmt = { sql, params };
     const resp = this.activeTxn
       ? await this.activeTxn.query(stmt)
       : await this.sdk.query(stmt);
@@ -76,15 +69,11 @@ export class FlexDbClient {
     return r as FlexDbQueryResult;
   }
 
-  /** Execute multiple SQL statements in a single round-trip. */
   async queryBatch(
     statements: Array<{ sql: string; params?: any[] }>,
   ): Promise<FlexDbQueryResult[]> {
     if (statements.length === 0) return [];
-    const stmts: SDKStatement[] = statements.map(s => ({
-      sql: s.sql,
-      params: (s.params ?? []) as SDKStatement['params'],
-    }));
+    const stmts = statements.map(s => ({ sql: s.sql, params: s.params ?? [] }));
     const resp = this.activeTxn
       ? await this.activeTxn.query(stmts)
       : await this.sdk.query(stmts);
@@ -93,11 +82,6 @@ export class FlexDbClient {
 
   // ── Transactions ────────────────────────────────────────────────────────────
 
-  /**
-   * Begin a transaction and return its ID string.
-   * The handle is stored internally; all subsequent query() calls are routed
-   * through it until setActiveTxnId(undefined) is called.
-   */
   async beginTransaction(): Promise<string> {
     this.activeTxn = await this.sdk.beginTransaction();
     return this.activeTxn.id;
@@ -109,17 +93,12 @@ export class FlexDbClient {
   }
 
   async rollbackTransaction(_txnId: string): Promise<void> {
-    if (!this.activeTxn) return; // already gone — swallow silently
+    if (!this.activeTxn) return;
     await this.activeTxn.rollback();
   }
 
-  // ── Transaction context helpers (used by async-unified.ts) ─────────────────
-
   setActiveTxnId(id: string | undefined): void {
-    if (id === undefined) {
-      this.activeTxn = undefined;
-    }
-    // If id is a string, the handle was already set by beginTransaction().
+    if (id === undefined) this.activeTxn = undefined;
   }
 
   getActiveTxnId(): string | undefined {
@@ -129,7 +108,6 @@ export class FlexDbClient {
   // ── Per-table consistency ───────────────────────────────────────────────────
 
   async setTableMode(table: string, mode: ConsistencyMode): Promise<void> {
-    // SDK's setTableMode accepts TableMode = 'raft' | 'eventual' | 'crdt'.
     await this.sdk.setTableMode(table, mode as any);
   }
 
@@ -169,8 +147,6 @@ export class FlexDbClient {
   /**
    * Execute a write-only SQL statement via /v1/execute.
    * The server rejects SELECT statements on this endpoint.
-   * Prefer `query()` for reads; use `execute()` when you want the server to
-   * enforce that only writes are being submitted.
    */
   async execute(sql: string, params: any[] = []): Promise<FlexDbQueryResult> {
     const stmt: SDKStatement[] = [{ sql, params: params as SDKStatement['params'] }];
@@ -214,11 +190,7 @@ export class FlexDbClient {
 
   // ── Backup / snapshot ───────────────────────────────────────────────────────
 
-  /**
-   * Download a raw SQLite snapshot from the node (GET /v1/snapshot).
-   * The flexdb-node SDK does not expose this endpoint yet, so we call it
-   * directly via fetch.
-   */
+  /** GET /v1/snapshot — not yet in the SDK, called directly. */
   async snapshot(): Promise<Uint8Array> {
     const url = `${this.nodes[0]}/v1/snapshot`;
     const headers: Record<string, string> = {};
@@ -249,14 +221,12 @@ export class FlexDbClient {
 
   // ── Startup helpers ─────────────────────────────────────────────────────────
 
-  /** Apply per-table consistency modes at connect time. */
   async applyTableModes(tableModes: Record<string, ConsistencyMode>): Promise<void> {
     for (const [table, mode] of Object.entries(tableModes)) {
       await this.setTableMode(table, mode);
     }
   }
 
-  /** Wait until at least one node is healthy. */
   async waitForHealth(maxRetries = 60, delayMs = 100): Promise<void> {
     let lastErr: Error | undefined;
     for (let i = 0; i < maxRetries; i++) {
@@ -273,7 +243,6 @@ export class FlexDbClient {
     );
   }
 
-  /** Release background health-check timers. Call when done with this client. */
   destroy(): void {
     this.sdk.destroy();
   }
@@ -281,14 +250,6 @@ export class FlexDbClient {
 
 // ─── URL parsing helper ───────────────────────────────────────────────────────
 
-/**
- * Parse a `flexdb://` URL into an array of `http://host:port` node addresses.
- *
- * Examples:
- *   "flexdb://localhost:4001"            → ["http://localhost:4001"]
- *   "flexdb://node1:4001,node2:4001"     → ["http://node1:4001", "http://node2:4001"]
- *   "flexdb://https://node1:4001"        → ["https://node1:4001"]  (explicit https)
- */
 export function parseFlexDbUrl(url: string): string[] {
   const withoutScheme = url.startsWith('flexdb://') ? url.slice('flexdb://'.length) : url;
   return withoutScheme.split(',').map(part => {

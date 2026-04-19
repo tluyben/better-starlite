@@ -105,6 +105,10 @@
     "https://deno.land/x/sqlite@v3.8/src/wasm.ts": "e79d0baa6e42423257fb3c7cc98091c54399254867e0f34a09b5bdef37bd9487"
   },
   "workspace": {
+    "dependencies": [
+      "jsr:@std/assert@1",
+      "jsr:@std/path@1"
+    ],
     "packageJson": {
       "dependencies": [
         "npm:@eslint/js@^9.36.0",

@@ -27,7 +27,7 @@ export interface DatabaseOptions {
 }
 
 /** Features exposed by AsyncDatabase beyond the base SQL API. */
-export type FlexDbFeature = 'per-table-consistency' | 'native-search' | 'transactions' | 'backup';
+export type FlexDbFeature = 'per-table-consistency' | 'native-search' | 'transactions' | 'backup' | 'analytics' | 'cluster-nodes';
 
 export type { ConsistencyMode } from './drivers/flexdb-client';
 
@@ -688,6 +688,8 @@ export class AsyncDatabase {
       case 'native-search':         return true;
       case 'transactions':          return true;
       case 'backup':                return true;
+      case 'analytics':             return true;
+      case 'cluster-nodes':         return true;
       default:                      return false;
     }
   }
@@ -742,6 +744,45 @@ export class AsyncDatabase {
     await this.ensureInitialized();
     this._requireFlexDb('getTableMode');
     return this.flexdbClient!.getTableMode(table);
+  }
+
+  // ── Cluster observability ─────────────────────────────────────────────────
+
+  /** List all nodes in the cluster. FlexDB only. */
+  async getNodes(): Promise<any> {
+    await this.ensureInitialized();
+    this._requireFlexDb('getNodes');
+    return this.flexdbClient!.getNodes();
+  }
+
+  /** Fetch raw Prometheus-format metrics text. FlexDB only. */
+  async metrics(): Promise<string> {
+    await this.ensureInitialized();
+    this._requireFlexDb('metrics');
+    return this.flexdbClient!.metrics();
+  }
+
+  // ── Analytics ────────────────────────────────────────────────────────────
+
+  /** List all analytical tables. FlexDB only. */
+  async listAnalytics(): Promise<any> {
+    await this.ensureInitialized();
+    this._requireFlexDb('listAnalytics');
+    return this.flexdbClient!.listAnalytics();
+  }
+
+  /** Get a single analytical table definition. FlexDB only. */
+  async getAnalyticsTable(name: string): Promise<any> {
+    await this.ensureInitialized();
+    this._requireFlexDb('getAnalyticsTable');
+    return this.flexdbClient!.getAnalyticsTable(name);
+  }
+
+  /** Trigger a rebuild of an analytical table. FlexDB only. */
+  async rebuildAnalyticsTable(name: string): Promise<any> {
+    await this.ensureInitialized();
+    this._requireFlexDb('rebuildAnalyticsTable');
+    return this.flexdbClient!.rebuildAnalyticsTable(name);
   }
 
   private _requireFlexDb(method: string): void {
@@ -830,6 +871,13 @@ export class AsyncDatabase {
       let rows: any[];
       if (this.sqliteDb) {
         rows = this.sqliteDb.pragma(`table_info(${table})`);
+      } else if (this.flexdbClient) {
+        // FlexDB: use table-valued function form — works via /v1/query and
+        // is parameterised so safe against table names with special chars.
+        const stmt = await this.prepare(
+          `SELECT name, type, "notnull", dflt_value, pk FROM pragma_table_info(?) ORDER BY cid`,
+        );
+        rows = await stmt.all(table);
       } else {
         const stmt = await this.prepare(`PRAGMA table_info(${table})`);
         rows = await stmt.all();
